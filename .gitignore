@@ -1,0 +1,68 @@
+# Python 가상환경
+.venv/
+venv/
+env/
+
+# Python·테스트·정적 검사 캐시
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# 패키지 빌드 산출물
+build/
+dist/
+*.egg-info/
+
+# 환경변수·인증서·로컬 인증정보
+.env
+.env.*
+!.env.example
+.secrets/
+secrets/
+credentials/
+.aws/
+*.pem
+*.key
+
+# 원자료·중간자료·특징표: 폴더 표시 파일만 허용
+/data/**/*
+!/data/**/
+!/data/**/.gitkeep
+
+# 학습 모형·입력 변환기: src/models/의 Python 코드는 포함
+/models/**/*
+!/models/**/
+!/models/**/.gitkeep
+
+# 예측·평가·실행 기록: 폴더 표시 파일만 허용
+/outputs/**/*
+!/outputs/**/
+!/outputs/**/.gitkeep
+
+# 별도 경로에 저장한 모형·배열 산출물
+*.joblib
+*.pkl
+*.pickle
+*.pt
+*.pth
+*.onnx
+*.npy
+*.npz
+
+# 개인 IDE·에이전트 설정
+.vscode/
+.idea/
+*.code-workspace
+.codex/
+.agents/
+
+# 운영체제 임시 파일
+.DS_Store
+Thumbs.db
+desktop.ini
+~$*

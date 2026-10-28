@@ -1,0 +1,170 @@
+# 데이터 경로, 특징 조건, 모형 후보와 평가 규칙을 한곳에서 관리하는 설정 파일이다.
+# 파이프라인과 각 처리 모듈에 전달할 공통 설정값을 정의한다.
+# COLUMN_MAPPING의 null은 원본 열 이름 미설정 값이다.
+PROJECT: KOSPI 차월 수익률 예측 연구 / 팀05
+PYTHON_TARGET: '3.11'
+PATHS:
+  panel_csv: data/raw/panel.csv
+  security_map_csv: data/raw/security_map.csv
+  dart_csv: data/raw/dart.csv
+  documents_csv: data/raw/documents.csv
+  panel: data/interim/panel.parquet
+  asof: data/interim/asof.parquet
+  features: data/processed/features.parquet
+  samples: data/processed/samples.parquet
+  predictions: outputs/validation/predictions.csv
+  monthly_ic: outputs/validation/monthly_ic.csv
+  final_test: outputs/final_test/
+  models: models/
+  run_records: outputs/run_id/
+COLUMN_MAPPING:
+  panel:
+    stock_id: null
+    month: null
+    return: null
+    market_cap: null
+    eligible: null
+  security_map:
+    stock_id: null
+    corp_code: null
+    valid_from: null
+    valid_to: null
+    evidence: null
+  dart:
+    corp_code: null
+    fiscal_period: null
+    published_at: null
+    receipt_id: null
+    equity: null
+    statement_type: null
+    account: null
+    unit: null
+    revision: null
+  documents:
+    document_id: null
+    source: null
+    published_at: null
+    raw_path: null
+    collection_status: null
+    meeting_date: null
+    release_date_source: null
+UNITS:
+  return: decimal
+  market_cap: KRW
+  equity: KRW
+KEY_FORMATS:
+  stock_id: 6-digit string
+  corp_code: 8-digit string
+  month: YYYY-MM
+ELIGIBILITY_SOURCE: null
+TIMEZONE: Asia/Seoul
+PIT:
+  cutoff: base_month calendar end
+  unknown_publication_date: exclude
+  unknown_time_on_month_end: next_base_month
+  correction: never retroactive
+  market_month_end: last trading day finalized market values
+TARGET_MONTH_OFFSET: 1
+H1:
+  momentum_months: 11
+  momentum_start_offset: -11
+  momentum_end_offset: -1
+  size_transform: natural_log
+  ddof: 1
+  min_stocks: 2
+  coefficients:
+    size: -1
+    bm: 1
+    mom: 1
+  divisor: 3
+  universe: same-month common valid Size/BM/Mom, independent of target y
+H3:
+  lambda: 0.97
+  init_n_valid: 10
+  init_ddof: 1
+  recent_window: 12
+  recent_min_valid: 10
+  ddof: 1
+  includes_base_month: true
+  missing_month: preserve state
+  reinitialize_every_12_months: false
+  raw_feature: sqrt(v)
+# 확장 사용 여부와 함수에 전달할 명세. null인 명세는 확정 후 설정한다.
+H2:
+  enabled: false
+  lexicon: null
+  context_rules: null
+  publication_date_rule:
+    preferred: actual_release_date
+    fallback: meeting_date_proxy
+    fallback_flag_required: true
+    unknown_time_on_month_end: next_base_month
+  sensitivity_spec:
+    source: panel_market_cap
+    transform: natural_log
+    standardize: monthly_zscore
+    ddof: 1
+    direction: smaller_is_higher
+H4:
+  enabled: false
+  search_spec: null
+  uncertainty_lexicon: null
+  matching_spec: null
+  aggregation_spec: null
+PERIODS:
+  warmup:
+  - 2000
+  - 2000
+  train:
+  - 2001
+  - 2021
+  test:
+  - 2022
+  - 2025
+FOLDS:
+  split_key: target_month
+  train_start_year: 2001
+  initial_train_end_year: 2005
+  first_validation_year: 2006
+  last_validation_year: 2021
+  min_external_train_years: 5
+OLS:
+  fit_intercept: true
+RIDGE:
+  fit_intercept: true
+  alphas:
+  - 0.01
+  - 0.1
+  - 1
+  - 10
+  - 100
+  tie_rule: larger_alpha
+MLP:
+  hidden_layer_sizes:
+  - - 32
+  - - 64
+    - 32
+  activation: relu
+  solver: adam
+  learning_rate_init: 0.001
+  batch_size: 256
+  max_iter: 500
+  alphas:
+  - 0.0001
+  - 0.01
+  random_state: 42
+  shuffle: false
+  early_stopping: false
+  tie_rule: fewer_total_hidden_nodes_then_larger_alpha
+EVALUATION:
+  method: monthly_spearman
+  tie_method: average
+  min_valid_stocks: 3
+  constant_rank: missing_with_reason
+  aggregation: equal_weight_common_valid_months
+  candidate_failure: record_and_exclude
+  tie_tolerance: null
+SAMPLE_ID: null
+REPRODUCIBILITY_PREDICTION_ATOL: 1.0e-10
+FINAL_TEST_ENABLED: false
+TEST_ACCESS_REQUIRES_FROZEN_CONFIG: true

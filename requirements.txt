@@ -1,0 +1,9 @@
+# 프로젝트 개발 의존성. Python 3.11 기준이며 버전은 설치·호환성 확인 후 고정한다.
+pandas
+numpy
+scipy
+scikit-learn
+requests
+beautifulsoup4
+pyarrow
+PyYAML
