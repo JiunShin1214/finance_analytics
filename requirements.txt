@@ -1,9 +1,26 @@
-# 프로젝트 개발 의존성. Python 3.11 기준이며 버전은 설치·호환성 확인 후 고정한다.
-pandas
-numpy
-scipy
-scikit-learn
-requests
-beautifulsoup4
-pyarrow
-PyYAML
+# Python 3.12.10 / Windows / 프로젝트 .venv
+# 2026-11-08: src·tests·config 및 루트 Python 파일 50개의 전체 import와 입출력 엔진 검토.
+# 프로젝트에서 직접 사용하는 패키지와 필수 입출력 엔진을 설치된 버전으로 고정.
+# 설치: python -m pip install -r requirements.txt
+# 표준 라이브러리와 자동 설치되는 하위 의존성은 별도 나열하지 않음.
+
+# 표 처리·수치 계산·HAC 검정
+pandas==3.1.0
+numpy==2.5.4
+scipy==1.18.1
+
+# PCA 독립 검산 및 예측모형 기반 라이브러리
+scikit-learn==1.9.1
+
+# 공시 수집·HTML 파싱
+requests==2.34.2
+beautifulsoup4==4.15.0
+
+# pandas Parquet 입출력 엔진
+pyarrow==26.0.0
+
+# YAML 실험 설정
+PyYAML==6.0.3
+
+# 관측·분석 그림
+matplotlib==3.11.2
