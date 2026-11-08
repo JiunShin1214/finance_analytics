@@ -194,7 +194,7 @@ MLP 공통 설정은 ReLU, Adam, 학습률 `0.001`, 배치 `256`, 최대 반복 
 │   ├── contracts.py
 │   ├── data_io.py
 │   ├── pipeline.py
-│   ├── preprocessing/       # 패널·종목 연결·공시 결합·품질 검사
+│   ├── preprocessing/       # 패널·자기자본 6단계(DART 수집·추출, KIND, DataGuide 추출, 공개일·검증, as-of)
 │   ├── features/            # H1·H2·H3·H4 특징
 │   ├── models/              # OLS·Ridge·MLP와 공통 인터페이스
 │   └── evaluation/          # 확장창·Rank IC
@@ -234,14 +234,14 @@ H2·H4의 기본 활성화 값은 `false`다. 활성 확장은 필수 명세를 
 
 ## 8. 개발 환경과 실행 방법
 
-Python 3.11을 기준으로 하며 의존성은 `requirements.txt`에서 관리한다. 패키지 버전은 설치·호환성 확인 후 고정한다.
+Python 3.12.10을 개발 기준으로 하며 의존성은 `requirements.txt`에서 관리한다. 직접 의존성은 실제 설치·import·`pip check` 검증 후 정확한 버전으로 고정한다. Python 3.11 신규 설치는 하지 않으며 Docker는 최종 통합 단계로 연기한다.
 
 ### 환경 생성
 
 프로젝트 루트의 PowerShell에서 사용하는 명령이다.
 
 ```powershell
-py -3.11 -m venv .venv
+py -3.12 -m venv .venv
 $runPython = '.\.venv\Scripts\python.exe'
 $cfg = 'config/experiment.yaml'
 & $runPython -m pip install -r requirements.txt
@@ -287,8 +287,30 @@ $cfg = 'config/experiment.yaml'
 
 ## 10. 구현 상태
 
-- H1·H2·H3·H4, OLS·Ridge·MLP, 전처리·평가·파이프라인은 함수 골격과 처리·검증 명세를 포함한다.
-- YAML 설정 로딩을 제외한 데이터 처리·학습·예측·평가 함수는 미구현이다.
-- `tests/`는 건너뛰기 처리된 검증 골격이며 기능 테스트는 아직 구현되지 않았다.
-- CLI 실행, Python 3.11 환경의 설치·호환성, 기능·재현성 검증은 완료되지 않았다.
-- 데이터·모형·평가 결과 파일은 아직 생성되지 않았다.
+2026-11-08 기준.
+
+- 구현: 입력 계약, 자기자본 공개시점 결합, 상장 적격성, 공통 패널 생성, H1 특징·점수, H1·H3 가용성 관측, H1 합성 방식 비교·가설검정.
+- 모형 학습·공통 표본 통합·최종평가는 STUB/PLANNED다. H2·H4는 다른 팀원 담당이다.
+- H1의 현재 산식은 원값·11개월 모멘텀·1/3 동일가중이다. 비교 실험은 기본 지수를 변경하지 않는다.
+
+## 11. 공통 입력과 실행 기록
+
+- 계산은 `data/`의 입력과 코드·설정을 사용한다. `outputs/`가 비어 있어도 실행할 수 있으며 노션 연결을 요구하지 않는다.
+- 특징 생성에 필요한 공통 입력은 `data/interim/{panel,eligibility,asof}.parquet`다. H1 분석은 `data/processed/{h1_components,mom,h1}.parquet`도 사용한다.
+- 일반·부호 제약 주성분의 계수와 점수는 기존 특징표에서 같은 산식으로 계산해 메모리에서 전달한다. 실행을 위한 계수·점수 파일을 추가하지 않는다.
+- 공시 공통 입력은 `data/interim/dart_filings.parquet`(공시 접수 정보 228,425행)과 `data/interim/dart_equity_facts.parquet`(공시에서 추출한 회계 관측값 345,282행)이다. 공시별 자기자본 선택·단위 판정은 `dart_extract`가 계산하며, 공개일 결합과 정정 버전은 `equity_dating`, 기준월별 사용 값은 `equity_asof`가 계산한다.
+- `data/`에는 실행 로그·응답 캐시 목록·재개 상태를 준비하지 않아도 된다. 공시 공통표는 관측값, 공시 형식, 표 위치와 출처를 보존한다. 동일 금액의 반복 관측과 표 내부 구성항목 확인 정보는 기존 선택 규칙에 사용하므로 유지한다.
+- 수집 도구의 새 운영 기록은 `outputs/collection/`에 쓴다. 수집 감사·재개 명령은 운영 기록을 다루는 별도 도구이며, 특징 생성·분석·가설검정의 선행 단계에 포함되지 않는다.
+- `outputs/run_id/`는 명령·입력/코드 해시·건수·검사 결과와 결과 사본을 보관한다. 후속 계산에서 과거 실행 폴더를 읽지 않는다.
+- 붙여넣기 보고서는 실행 시 `outputs/h1_report.md`로 생성한다. 출력 폴더와 이전 보고서는 미리 준비하지 않아도 된다.
+- 데이터는 Git에서 제외된다. 팀원에게 필요한 `data/` 입력을 별도로 전달한다. 최종평가 승인 전에는 2022~2025 봉인 자료를 사용하지 않는다.
+
+다른 컴퓨터에서는 Python 3.12 환경에서 `requirements.txt`를 설치하고, 같은 `data/`를 프로젝트 루트에 둔다. 분석에는 다음 명령을 사용한다. 각 명령은 필요한 출력 폴더를 생성한다.
+
+```powershell
+python -m src.pipeline --stage ingest --execute
+python -m src.pipeline --stage features --execute
+python -m src.pipeline --stage h1-mean-tests --execute
+```
+
+`h1-mean-tests`는 공통 특징에서 고정된 10개 지수와 월별 순위 상관을 계산해 검정한다. 이전 PCA·검정 실행 폴더가 필요하지 않다. 공시 선택만 확인하려면 `python -m src.preprocessing.dart_extract`를 사용한다. 자기자본 전체를 재생성하는 명령(`equity_dating`, `equity_asof`)은 DataGuide 원본 등 해당 원천 입력도 사용하며 별도로 실행한다.

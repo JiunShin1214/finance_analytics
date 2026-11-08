@@ -44,6 +44,10 @@ credentials/
 !/outputs/**/
 !/outputs/**/.gitkeep
 
+# 실행 이력·데이터 관측은 폴더 표시 파일까지 모두 제외
+/outputs/run_id/
+/outputs/데이터관측/
+
 # 별도 경로에 저장한 모형·배열 산출물
 *.joblib
 *.pkl
@@ -60,6 +64,12 @@ credentials/
 *.code-workspace
 .codex/
 .agents/
+.claude/
+
+# 개인 작업 지침·연구 기록
+/AGENTS.md
+/CLAUDE.md
+/docs/
 
 # 운영체제 임시 파일
 .DS_Store
