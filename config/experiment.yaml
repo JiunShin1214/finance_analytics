@@ -2,14 +2,34 @@
 # 파이프라인과 각 처리 모듈에 전달할 공통 설정값을 정의한다.
 # COLUMN_MAPPING의 null은 원본 열 이름 미설정 값이다.
 PROJECT: KOSPI 차월 수익률 예측 연구 / 팀05
-PYTHON_TARGET: '3.11'
+PYTHON_TARGET: '3.12.10'
 PATHS:
-  panel_csv: data/raw/panel.csv
+  wide_csv:
+    warmup_2000:
+      adjusted_monthly_return: data/raw/warmup_2000__adjusted_monthly_return.csv
+      raw_month_end_market_cap: data/raw/warmup_2000__raw_month_end_market_cap.csv
+      raw_month_end_price: data/raw/warmup_2000__raw_month_end_price.csv
+      raw_month_end_shares_outstanding: data/raw/warmup_2000__raw_month_end_shares_outstanding.csv
+      company_name: data/raw/warmup_2000__company_name.csv
+      isin: data/raw/warmup_2000__isin.csv
+    train_2001_2021:
+      adjusted_monthly_return: data/raw/train_2001_2021__adjusted_monthly_return.csv
+      raw_month_end_market_cap: data/raw/train_2001_2021__raw_month_end_market_cap.csv
+      raw_month_end_price: data/raw/train_2001_2021__raw_month_end_price.csv
+      raw_month_end_shares_outstanding: data/raw/train_2001_2021__raw_month_end_shares_outstanding.csv
+      company_name: data/raw/train_2001_2021__company_name.csv
+      isin: data/raw/train_2001_2021__isin.csv
   security_map_csv: data/raw/security_map.csv
   dart_csv: data/raw/dart.csv
   documents_csv: data/raw/documents.csv
   panel: data/interim/panel.parquet
   asof: data/interim/asof.parquet
+  eligibility: data/interim/eligibility.parquet
+  trading_days: data/interim/trading_days.parquet
+  h1_components: data/processed/h1_components.parquet
+  mom: data/processed/mom.parquet
+  h1: data/processed/h1.parquet
+  h3: data/processed/h3.parquet
   features: data/processed/features.parquet
   samples: data/processed/samples.parquet
   predictions: outputs/validation/predictions.csv
@@ -19,10 +39,15 @@ PATHS:
   run_records: outputs/run_id/
 COLUMN_MAPPING:
   panel:
-    stock_id: null
-    month: null
-    return: null
-    market_cap: null
+    stock_id: stock_id
+    month: month
+    return: adjusted_monthly_return
+    market_cap: raw_month_end_market_cap
+    price: raw_month_end_price
+    shares_outstanding: raw_month_end_shares_outstanding
+    company_name: company_name
+    isin: isin
+    # 역사적 적격성 원천은 미확보. True/False를 추정하지 않는다.
     eligible: null
   security_map:
     stock_id: null
@@ -51,12 +76,14 @@ COLUMN_MAPPING:
 UNITS:
   return: decimal
   market_cap: KRW
+  price: KRW
+  shares_outstanding: shares
   equity: KRW
 KEY_FORMATS:
-  stock_id: 6-digit string
+  stock_id: 6-character string (letters allowed, leading zeros preserved)
   corp_code: 8-digit string
   month: YYYY-MM
-ELIGIBILITY_SOURCE: null
+ELIGIBILITY_SOURCE: krx_kospi_listing_delisting_lists_plus_marcap_month_end  # data/raw/상장, data/raw/상장폐지, data/raw/marcap (src/preprocessing/listing.py)
 TIMEZONE: Asia/Seoul
 PIT:
   cutoff: base_month calendar end
@@ -168,3 +195,63 @@ SAMPLE_ID: null
 REPRODUCIBILITY_PREDICTION_ATOL: 1.0e-10
 FINAL_TEST_ENABLED: false
 TEST_ACCESS_REQUIRES_FROZEN_CONFIG: true
+
+# 2026-11-05 사용자 승인: 2단계, 대표 연도 2021. 이후 단계는 별도 승인.
+H1_TEST:
+  approved_stage: 2
+  representative_year: 2021
+  notion_tables_path: outputs/h1_report.md
+  pca_winsorization: null
+  pca_components: [PC1]
+  pca_combination: null
+  pca_sign_rule: first_largest_abs_positive_then_previous_same_rank
+  selected_candidate: null
+  hac_approved: true
+
+# 2026-11-06: 원값·제한값 PC1 순위 상관 비교 승인. 후보 선정·검정은 별도.
+H1_PCA:
+  approved_scope: structure_diagnostics
+  variants: [raw, winsor]
+  run_category: h1_pca반영지수
+
+  # PC1 점수에도 기존 표시 방향을 유지하는 규칙을 사용자 승인.
+  display_sign_rule: first_largest_abs_positive_then_previous_same_rank
+  pc1_ic_approved: true
+  pc1_ic_variants: [raw, winsor]
+  comparison_figures: false
+  constrained_exploration_approved: true
+  constrained_variants: [raw, winsor]
+  development_closed: true
+
+H1_HYPOTHESIS:
+  approved: true
+  run_category: h1가설검정
+  alpha: 0.05
+  reference_distribution: t
+  df: T-1
+  lag_rule: floor(4*(T/100)^(2/9))
+  kernel: Bartlett
+  small_sample_correction: false
+  holm_family: nine_paired_differences_only
+  selected_candidate: null
+  mean_zero_extension_approved: true
+  mean_zero_holm_family: nine_alternative_means_only
+
+# 2026-11-08 사용자 결정: 노션 10주차 H1과 같은 흐름(분포 -> 원값 Rank IC -> 1·99 분위수 제한 비교 -> 가설검정).
+# KOSPI 상장만 보고 4개월 비상장 공백에서 EWMA 초기화. 분석은 src/evaluation/h3_analysis.py, 확정 후 features 단계에 편입.
+H3_TEST:
+  approved: true
+  run_category: h3분석
+  representative_year: 2021
+  winsorization: [0.01, 0.99]
+  notion_tables_path: outputs/h3_report.md
+H3_HYPOTHESIS:
+  approved: true  # 2026-11-08 사용자 승인(분석 결과 보고 후)
+  run_category: h3가설검정
+  alpha: 0.05
+  reference_distribution: t
+  df: T-1
+  lag_rule: floor(4*(T/100)^(2/9))
+  kernel: Bartlett
+  small_sample_correction: false
+  holm_family: H1_H4_pending
