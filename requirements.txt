@@ -12,6 +12,10 @@ scipy==1.18.1
 # PCA 독립 검산 및 예측모형 기반 라이브러리
 scikit-learn==1.9.1
 
+# 부스팅 회귀·순위 학습(2026-11-11 추가)
+xgboost==3.4.1
+lightgbm==4.7.0
+
 # 공시 수집·HTML 파싱
 requests==2.34.2
 beautifulsoup4==4.15.0

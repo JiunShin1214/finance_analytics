@@ -157,15 +157,23 @@ FOLDS:
   min_external_train_years: 5
 OLS:
   fit_intercept: true
+# 2026-11-10 사용자 결정: 후보는 glmnet 방식 λ(평균 오차 기준 벌점)로 정의하고 sklearn alpha = λ × 학습 행 수로 바꾼다.
+# 확장 창에서 학습 행이 3만→15만으로 늘어도 같은 λ면 같은 세기의 벌점이 되도록 하기 위함(이전 alphas 0.01~100은 사실상 OLS).
+# λ는 Fold마다 학습 기간 마지막 1년을 내부 검증으로 떼어 평균 Rank IC로 고른다. 바깥 검증 연도는 선택에 쓰지 않는다.
 RIDGE:
   fit_intercept: true
-  alphas:
+  lambdas:
+  - 0.001
   - 0.01
   - 0.1
   - 1
   - 10
-  - 100
-  tie_rule: larger_alpha
+  alpha_scaling: lambda_times_train_rows
+  # 2026-11-10: 입력은 Fold 학습 행의 평균·표준편차(ddof=0)로 표준화한 뒤 벌점(glmnet standardize=TRUE, ESL 3.4.1). 계수는 원래 크기로도 보고.
+  standardize: train_rows_mean_sd_ddof0
+  inner_validation_years: 1
+  selection_metric: mean_rank_ic
+  tie_rule: larger_lambda
 MLP:
   hidden_layer_sizes:
   - - 32
@@ -183,6 +191,24 @@ MLP:
   shuffle: false
   early_stopping: false
   tie_rule: fewer_total_hidden_nodes_then_larger_alpha
+# 2026-11-11 사용자 결정(시험 단계): 부스팅 2×2 = {XGBoost, LightGBM} × {회귀, 순위}. MLP 항목은 그대로 둔다.
+# 회귀는 제곱오차, 순위는 lambdarank. 순위 정답은 학습 기간 안에서 매달 수익률 5분위(0~4), 그룹은 목표월.
+# 평가는 다른 모형과 같은 월별 Rank IC. 하이퍼파라미터 후보와 잘림·이득 설정 통일 여부는 미정.
+# 설치 버전 기본값(확인 2026-11-11): XGBoost rank:ndcg = pair_method topk, num_pair_per_sample 최대(사실상 전체 쌍),
+#   ndcg_exp_gain true(2^등급-1). LightGBM lambdarank = truncation_level 30(상위 30위 쌍만), label_gain 2^등급-1.
+BOOSTING:
+  libraries: [xgboost, lightgbm]
+  label_grouping: target_month
+  rank_label: monthly_quintile_0_4
+  regression_objective:
+    xgboost: reg:squarederror
+    lightgbm: regression
+  rank_objective:
+    xgboost: rank:ndcg
+    lightgbm: lambdarank
+  hyperparameters: null
+  inner_validation_years: 1
+  selection_metric: mean_rank_ic
 EVALUATION:
   method: monthly_spearman
   tie_method: average
@@ -236,6 +262,51 @@ H1_HYPOTHESIS:
   selected_candidate: null
   mean_zero_extension_approved: true
   mean_zero_holm_family: nine_alternative_means_only
+
+# 2026-11-09 사용자 결정: H1 Size 구성요소 사후 진단(비교용 단독 실행, src/evaluation/h1_size_test.py).
+# 후보 A·B·C 고정, 대응 차이 2개만 검정(각 후보의 평균=0 검정 없음). 결과로 H1을 바꾸거나 후보를 추가하지 않는다.
+H1_SIZE_TEST:
+  approved: true
+  run_category: h1_size_test
+  candidates: [A, B, C]
+  coefficients:  # [size, bm, mom, divisor]; size는 월별 Z(Size) 원부호
+    A: [-1, 1, 1, 3]
+    B: [0, 1, 1, 2]
+    C: [1, 1, 1, 3]
+  baseline: A
+  alpha: 0.05
+  reference_distribution: t
+  df: T-1
+  lag_rule: floor(4*(T/100)^(2/9))
+  kernel: Bartlett
+  small_sample_correction: false
+  holm_family: two_paired_differences_only
+  mean_zero_tests: false
+  expected_valid_months: 251
+  expected_pairs: 165331
+  selected_candidate: null
+
+# 2026-11-10 사용자 결정: OLS·Ridge 비교군(단독 실행, src/evaluation/linear_reg_test.py). 노션 11주차 5.4.
+# 비교군이라 최종 선택 대상이 아니다. 통계 검정은 부스팅 비교 뒤 함께 설계한다.
+LINEAR_REG_TEST:
+  approved: true
+  run_category: linear_reg_test
+  models: [ols, ridge]
+  target: raw_adjusted_monthly_return
+  input_sets:
+    main: [z_size, z_bm, z_mom, h3]
+    reference: [h1, h3]
+  variants: [raw, winsor]
+  winsor_quantiles: [0.01, 0.99]
+  winsor_scope: monthly_cross_section_train_target_and_inputs
+  training_rows: all_inputs_and_target_present
+  prediction_rows: all_stocks_with_target_return
+  missing_feature_fill: common_set_zscore_then_zero_prediction_only
+  validation_years: [2006, 2021]
+  expected_training_pairs: 165331
+  expected_validation_months: 192
+  hypothesis_tests: false
+  selected_candidate: null
 
 # 2026-11-08 사용자 결정: 노션 10주차 H1과 같은 흐름(분포 -> 원값 Rank IC -> 1·99 분위수 제한 비교 -> 가설검정).
 # KOSPI 상장만 보고 4개월 비상장 공백에서 EWMA 초기화. 분석은 src/evaluation/h3_analysis.py, 확정 후 features 단계에 편입.
