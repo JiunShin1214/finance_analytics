@@ -163,6 +163,17 @@ class BoostingRunTests(unittest.TestCase):
         self.assertEqual(mt.split_config_id(bid)['hparams'], 'd2_lr0.01')
         self.assertEqual(len(mt.expected_boosting_ids('xgb_reg')), 54 * 4)
 
+    def test_sigma_h3_comparison_tolerance(self):
+        keys = pd.DataFrame({'stock_id': ['a', 'a', 'b'], 'base_month': ['2010-01', '2010-02', '2010-01']})
+        h3 = keys.assign(sigma=[0.1, np.nan, 0.2])
+        grid = keys.assign(sigma_decay097=[0.1 + 5.551e-17, np.nan, 0.2])
+        c = mt.compare_sigma_to_h3(grid, h3, atol=1e-10)
+        self.assertEqual((c['sigma_decay097_values_differ'], c['sigma_decay097_max_abs_diff'] > 0), (1, True))
+        with self.assertRaises(ValueError):
+            mt.compare_sigma_to_h3(grid.assign(sigma_decay097=[0.1 + 1e-9, np.nan, 0.2]), h3, atol=1e-10)
+        with self.assertRaises(ValueError):
+            mt.compare_sigma_to_h3(grid.assign(sigma_decay097=[0.1, 0.3, 0.2]), h3, atol=1e-10)
+
     def test_unapproved_input_set_rejected(self):
         with self.assertRaises(ValueError):
             mt.run_boosting(self.prep, CONFIG, 'xgb_reg', sets={'ind:bm': ['bm']}, folds=[self.folds[0]], log=lambda *_: None)

@@ -162,6 +162,28 @@ def build_model_data(comp: pd.DataFrame, sigma_grid: pd.DataFrame, returns: pd.D
     return data
 
 
+def compare_sigma_to_h3(grid: pd.DataFrame, h3: pd.DataFrame, *, atol: float) -> dict:
+    """다시 계산한 λ=0.97 σ와 h3.parquet 비교. 키·결측 위치는 정확히 같아야 하고, 값은 |차이| ≤ atol.
+
+    허용오차(2026-11-14 결정): Linux(Colab)와 Windows는 같은 파일에서도 마지막 자리(상대 ~2.7e-16)가 달랐다.
+    atol은 config REPRODUCIBILITY_PREDICTION_ATOL(1e-10). 실제 최대 차이와 다른 값 수를 기록한다.
+    """
+    ref = h3.sort_values(['stock_id', 'base_month']).reset_index(drop=True)
+    g = grid.sort_values(['stock_id', 'base_month']).reset_index(drop=True)
+    if not g[['stock_id', 'base_month']].equals(ref[['stock_id', 'base_month']]):
+        raise ValueError('sigma_decay097_keys_differ_from_h3_parquet')
+    a, e = g['sigma_decay097'].to_numpy(float), ref['sigma'].to_numpy(float)
+    if not np.array_equal(np.isnan(a), np.isnan(e)):
+        raise ValueError('sigma_decay097_missing_differs_from_h3_parquet')
+    ok = ~np.isnan(a)
+    diff = np.abs(a[ok] - e[ok])
+    max_diff = float(diff.max()) if len(diff) else 0.0
+    if max_diff > atol:
+        raise ValueError(f'sigma_decay097_differs_from_h3_parquet:{max_diff:.3e}')
+    return {'sigma_decay097_equals_h3_parquet': True, 'sigma_decay097_atol': atol,
+            'sigma_decay097_max_abs_diff': max_diff, 'sigma_decay097_values_differ': int((diff > 0).sum())}
+
+
 def prepare_inputs(root: Path, config, *, h3_grid: pd.DataFrame | None = None) -> dict:
     """공유 표 4개만 읽어 메모리 입력을 만든다. 반환 dict: data(종목×월 표), sigma_labels, checks, inputs(해시)."""
     check_grid(config)
@@ -179,14 +201,8 @@ def prepare_inputs(root: Path, config, *, h3_grid: pd.DataFrame | None = None) -
         h3_grid = compute_h3_sigma_grid(panel, eligibility)
     cand = h3_grid.attrs.get('h3_lambda_candidates', h3_lambda_candidates())
     labels = list(cand['label'])
-    checks = {}
-    ref = h3.sort_values(['stock_id', 'base_month']).reset_index(drop=True)
     g = h3_grid.sort_values(['stock_id', 'base_month']).reset_index(drop=True)
-    a, e = g['sigma_decay097'].to_numpy(float), ref['sigma'].to_numpy(float)
-    if not (g[['stock_id', 'base_month']].equals(ref[['stock_id', 'base_month']])
-            and np.array_equal(np.isnan(a), np.isnan(e)) and np.array_equal(a[~np.isnan(a)], e[~np.isnan(e)])):
-        raise ValueError('sigma_decay097_differs_from_h3_parquet')
-    checks['sigma_decay097_equals_h3_parquet'] = True
+    checks = compare_sigma_to_h3(g, h3, atol=float(config['REPRODUCIBILITY_PREDICTION_ATOL']))
     data = build_model_data(comp, g, panel[['stock_id', 'month', 'return']], labels, units=config['UNITS'])
     val = data[data.predict & data.year.between(2006, 2021)]
     checks.update(validation_prediction_rows=int(len(val)), validation_prediction_rows_all_eligible=bool(val.eligible.eq(True).all()),
