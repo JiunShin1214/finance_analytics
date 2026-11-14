@@ -246,27 +246,41 @@ MODEL_GRID:
                                              # GKX 범위는 ENet(L1+L2) 기준이라 순수 Ridge와 다름. alpha = λ × 학습 행 수(기존 방식)
   ridge_input_standardize: false             # 입력이 이미 순위 [−1,1]이라 추가 표준화 없음 [GKX와 같음; 2026-11-13]. OLS는 원래 표준화 무관
   # --- 순위 모델 ---
-  rank_models: [lambdarank, pairwise, rank_regression]   # pairwise는 XGBoost만(LightGBM에 없음) [2026-11-13 결정, Poh 외 2020]
-  rank_label: monthly_decile_0_9             # lambdarank·pairwise 공통 [Poh 외 2020 10분위; 5분위 대체 2026-11-13]
+  rank_models: [pairwise, rank_regression]  # pairwise는 XGBoost만(LightGBM에 없음) [2026-11-13 결정, Poh 외 2020]
+                                             # lambdarank(XGB rank:ndcg, LGB lambdarank) 제외 [결정 2026-11-14]. 근거(자료): LGB lambdarank
+                                             # lr 0.01·깊이 1~3·Fold 16·8 측정 6회 모두 최고 내부 IC 음수(−0.007~−0.052), XGB도 Colab 1회 0.003.
+                                             # 같은 10분위 정답의 pairwise는 +0.043 → 상위 등급 가중이 전체 순서(Rank IC)와 반대로 학습(추정)
+  rank_label: monthly_decile_0_9             # pairwise [Poh 외 2020 10분위; 5분위 대체 2026-11-13]
   rank_pairs: all                            # 두 순위 손실 모두 전체 쌍. XGB topk·쌍 수 최대, LGB truncation_level 1000 [결정; mean 추출은 OS별 결과 달라짐(XGB 문서)]
-  lambdarank_gain: exp2_minus_1              # 두 라이브러리 기본값 2^등급-1을 명시
   rank_regression_target: monthly_percentile # 0~1, 손실 MSE(값이 묶여 Huber 불필요)
   # --- 부스팅 설정 ---
+  boosting_regression_targets: [winsor_1_99, monthly_zscore]   # 부스팅 회귀만(선형은 위 3종 유지) [결정 2026-11-14: 계산량]
+                                             # 근거(자료): 선형 4개 입력에서 원값이 6줄 모두 최저, Huber②에서는 원값≈윈저
+  boosting_regression_losses: [mse, huber_sigma135]   # Huber① 제외 [결정 2026-11-14]. 근거(자료): 선형에서 Huber①−MSE +0.001~0.003,
+                                             # 직선 벌점 행 약 0.1%라 사실상 MSE; GKX Table A.1 Huber 개선 작음(원문)
+  boosting_h3_spans: [12, 36, 60]            # 부스팅의 H3 λ 후보(선형은 위 10개 유지) [결정 2026-11-14: 계산량·근거]
+                                             # 원전 기간만: Blitz & van Vliet(2007) 강건성 1년·본문 3년, Baker·Bradley·Wurgler(2011) 5년(모두 원문).
+                                             # 사이 값(18~54)은 6개월 간격 보간, 0.97은 월별 직접 근거 없음(§3.2). 선택은 그대로 내부 검증 함께 고르기
   libraries: [xgboost, lightgbm]
   depths: [1, 2, 3]                          # [GKX 1~2 ∪ LWZ 1~3]
-  learning_rates: [0.01, 0.1]                # [GKX, LWZ]
+  learning_rates: [0.01]                     # [GKX, LWZ 후보 {0.01, 0.1}] 중 0.01만 [결정 2026-11-14: 계산량]
+                                             # 근거(자료, 12회 측정): lr 0.01의 트리 10개 ≈ lr 0.1의 트리 1개(고른 트리 ~10배, 최고 IC 차 ≤0.003),
+                                             # 최고점이 대부분 작은 트리 수라 촘촘한 0.01 선택. 고른 트리가 1000 근처에 몰리면 후속으로 0.1 추가
   hyperparameter_reporting: all_candidates   # 6개 모두 보고, 내부 검증으로 고르지 않음 [교수님 피드백 2]
   max_trees: 1000                            # [GKX·LWZ 1~1000]
   tree_count_selection: best_inner_validation_ic_over_all_trees   # 1000개 모두 학습, 인내값 없음
   lightgbm_num_leaves: two_power_depth       # max_depth=d, num_leaves=2^d [LGB 조정 가이드]
-  min_hessian_in_leaf: 0.001                 # XGB min_child_weight, LGB min_sum_hessian_in_leaf [LGB 기본값; 0이면 lambdarank 오류]
+  min_hessian_in_leaf: 0.001                 # XGB min_child_weight, LGB min_sum_hessian_in_leaf [LGB 기본값; 0이면 lambdarank 오류(실측, 제외 전)]
   min_data_in_leaf: 1
   l2: 0                                      # GKX Algorithm 4 기본형(추가 규제 없음). GKX·LWZ·Poh 모두 L2 미조정. 규제 후보는 나중에 검토(2026-11-13)
   l1: 0
   subsample: 1.0                             # 표본 추출 없음 → 난수 없음
   colsample: 1.0
   max_bin: 256                               # XGB 기본 256, LGB 기본 255를 256으로 맞춤 [결정]
-  device: {xgboost: cuda, lightgbm: auto}    # Colab GPU, LightGBM은 GPU 불가 시 CPU. 최종 모델·prediction.csv는 CPU
+  device: {xgboost: cuda, lightgbm: cpu}     # [결정 2026-11-14] 고를 때 쓴 장치 = 최종 모델 장치(XGB는 최종 모델도 GPU, 기존 "최종 CPU" 변경).
+                                             # 근거(자료): 같은 설정에서 GPU·CPU가 다른 나무(내부 IC 0.056 vs 0.051, 예측 차 최대 0.30),
+                                             # GPU 반복은 차이 0.0. 속도: XGB pairwise GPU 55초 vs CPU 약 370초(추정). LGB GPU는 max_bin 256에서
+                                             # 'bin size 257' 오류로 불가 → CPU
   # --- 보고와 선택 ---
   report_metrics: [mean_ic, ic_sd, icir, ic_positive_share, r2_pct]   # 학습·바깥 검증과 그 차이, R²는 수익률 단위 예측만 [GKX 식 19]
   report_periods: [[2006, 2010], [2011, 2021], [2018, 2021]]

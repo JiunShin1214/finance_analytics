@@ -23,6 +23,7 @@ import platform
 import subprocess
 import sys
 import time
+import warnings
 from datetime import datetime
 from pathlib import Path
 
@@ -38,6 +39,8 @@ H1_PARTS = ('size', 'bm', 'mom')
 TARGETS = ('raw', 'winsor_1_99', 'monthly_zscore')
 RANK_TARGETS = ('decile', 'percentile')                # 순위 모델 정답: 10분위 floor(10(r−1)/N), 백분위 r/(N+1) [2026-11-14 결정]
 BOOSTING_SETS = ('ind:sigma', 'ind:size+bm+mom+sigma', 'idx:h1', 'idx:h1+sigma')   # 부스팅은 주 결과 입력만(노션 §5.1)
+# 실행 단계(2026-11-14 결정): 개별형을 먼저, 지수형은 ①(H1 지수) → ②로 따로. [σ] 단독은 지수형 3조합의 H3 칸이라 ②에 둔다.
+BOOSTING_PHASES = {'individual': ('ind:size+bm+mom+sigma',), 'index': ('ind:sigma', 'idx:h1', 'idx:h1+sigma')}
 WINSOR_Q = (0.01, 0.99)
 BASE_FIRST, BASE_LAST = '2000-12', '2021-11'          # 목표월 2001-01~2021-12
 TRAIN_START, INDEX_TRAIN_START = 2003, 2001
@@ -670,10 +673,25 @@ def merge_results(parts: list[dict]) -> dict:
         out['curves'] = [c for p in parts for c in p.get('curves', [])]
     if any('params' in p for p in parts):
         out['params'] = {k: v for p in parts for k, v in p.get('params', {}).items()}
+    for key in ('kind', 'phase', 'device'):                 # 부스팅: 같은 종류·단계·장치끼리만 합친다
+        values = {p.get(key) for p in parts}
+        if len(values) > 1:
+            raise ValueError(f'parts_differ_in_{key}')
+        if None not in values:
+            out[key] = values.pop()
     return out
 
 
 # ---------- 부스팅(boosting_model) ----------
+
+def boosting_labels(prepared: dict) -> list[str]:
+    """부스팅의 H3 λ 후보 이름(span 12·36·60개월). 입력 준비에 셋 다 있어야 한다."""
+    labels = [f'span{n}' for n in boosting.H3_SPANS]
+    missing = [x for x in labels if x not in prepared['sigma_labels']]
+    if missing:
+        raise ValueError('boosting_h3_labels_missing:' + ','.join(missing))
+    return labels
+
 
 def boosting_input_sets() -> dict:
     """부스팅 입력 4개(주 결과): [σ], [Size, B/M, Mom, σ], [H1 지수], [H1 지수, σ]. 부분집합 비교군은 선형에서만."""
@@ -841,51 +859,87 @@ def _run_fold_boosting(fold: dict) -> dict:
             'params': params, 'seconds': time.perf_counter() - t_fold}
 
 
-def run_boosting(prepared: dict, config, kind: str, *, settings=None, sets: dict | None = None, folds: list[dict] | None = None,
-                 inner_scope: str = 'common', device: str = 'cpu', n_threads: int | None = None, workers: int = 1,
-                 log=print) -> dict:
-    """한 부스팅 종류(전체 또는 일부 설정)를 실행한다. 반환 형식은 run_linear와 같고 curves(학습별 트리 곡선)·params가 더 있다.
+def _kind_settings(kind: str, settings) -> list[tuple]:
+    if kind not in boosting.KINDS:
+        raise ValueError('boosting_kind_unknown')
+    settings = boosting.settings(kind) if settings is None else [tuple(s) for s in settings]
+    if any(s[0] != kind for s in settings) or not set(settings) <= set(boosting.settings(kind)):
+        raise ValueError('settings_kind_mismatch')
+    return settings
 
-    지수형 ①은 설정마다 2003~2021년 지수를 먼저 만든다. workers>1이면 Fold를 프로세스로 나눈다(라이브러리 스레드와 겹치므로
-    n_threads를 함께 줄일 것). 난수 없음.
+
+def run_boosting_stage1(prepared: dict, config, kind: str, *, settings=None, inner_scope: str = 'common', device: str | None = None,
+                        n_threads: int | None = None, log=print) -> dict:
+    """지수형 ①: 설정마다 2003~2021년 H1 지수(순위 [−1, 1])를 만든다. 결과는 같은 세션 메모리로 run_boosting(phase='index')에
+    넘긴다(파일로 저장했다가 다시 읽지 않음). 반환: kind, settings, inner_scope, n_rows, index(설정별 배열), stage1 표, curves, timings."""
+    if inner_scope not in INNER_SCOPES:
+        raise ValueError('inner_scope_unknown')
+    check_grid(config)
+    data = prepared['data']
+    settings = _kind_settings(kind, settings)
+    device = device or boosting.default_device(kind)
+    decay_of = _decay_of(prepared)
+    index, tables, curves, timings = {}, [], [], []
+    for setting in settings:
+        t0 = time.perf_counter()
+        index[setting], table, c = build_h1_index_boosting(data, setting, inner_scope=inner_scope, decay_of=decay_of,
+                                                           device=device, n_threads=n_threads)
+        tables.append(table)
+        curves += c
+        seconds = time.perf_counter() - t0
+        timings.append({'part': 'stage1', 'fold': None, 'model': kind, 'target': setting[1], 'loss': setting[2],
+                        'hparams': boosting.hparam_tag(*setting[3:]), 'seconds': seconds})
+        log(f"지수형 ① {setting[1]} {setting[2]} {boosting.hparam_tag(*setting[3:])}: {seconds:.0f}초, "
+            f"고른 트리 {table.trees.min()}~{table.trees.max()}")
+    return {'kind': kind, 'settings': settings, 'inner_scope': inner_scope, 'device': device, 'n_rows': len(data), 'index': index,
+            'stage1': _concat(tables), 'curves': curves, 'timings': timings}
+
+
+def run_boosting(prepared: dict, config, kind: str, *, phase: str, stage1: dict | None = None, settings=None,
+                 sets: dict | None = None, folds: list[dict] | None = None, inner_scope: str = 'common', device: str | None = None,
+                 n_threads: int | None = None, workers: int = 1, log=print) -> dict:
+    """한 부스팅 종류·한 단계(전체 또는 일부 설정)를 실행한다. 반환 형식은 run_linear와 같고 curves·params가 더 있다.
+
+    phase='individual': [Size, B/M, Mom, σ]. phase='index': [σ]·[H1 지수]·[H1 지수, σ], 같은 세션의 run_boosting_stage1 결과가
+    필요하다(같은 종류·내부 검증 범위·자료, 설정 포함). workers>1이면 Fold를 프로세스로 나눈다(n_threads를 함께 줄일 것). 난수 없음.
     """
     if inner_scope not in INNER_SCOPES:
         raise ValueError('inner_scope_unknown')
-    if kind not in boosting.KINDS:
-        raise ValueError('boosting_kind_unknown')
+    if phase not in BOOSTING_PHASES:
+        raise ValueError('boosting_phase_unknown')
     grid = check_grid(config)
     data = prepared['data'].copy()
     decay_of = _decay_of(prepared)
     folds = plan_folds(grid) if folds is None else folds
-    settings = boosting.settings(kind) if settings is None else [tuple(s) for s in settings]
-    if any(s[0] != kind for s in settings):
-        raise ValueError('settings_kind_mismatch')
-    sets = boosting_input_sets() if sets is None else sets
-    if not set(sets) <= set(BOOSTING_SETS):
-        raise ValueError('boosting_input_set_not_approved')
+    settings = _kind_settings(kind, settings)
+    device = device or boosting.default_device(kind)       # 기본은 config 장치. 다르게 주면 run.json에 표시
+    allowed = BOOSTING_PHASES[phase]
+    sets = {k: v for k, v in boosting_input_sets().items() if k in allowed} if sets is None else sets
+    if not sets or not set(sets) <= set(allowed):
+        raise ValueError('boosting_input_set_not_in_phase')
     val_keys, offsets = validation_keys(data, folds)
-    stage1, curves, timings, index_cols = [], [], [], {}
+    index_cols, stage1_rows, curves, timings = {}, pd.DataFrame(), [], []
     if any('h1_index' in cols for cols in sets.values()):
+        if (stage1 is None or stage1['kind'] != kind or stage1['inner_scope'] != inner_scope or stage1['device'] != device
+                or stage1['n_rows'] != len(data) or not set(settings) <= set(stage1['settings'])):
+            raise ValueError('stage1_result_required_for_same_kind_scope_device_settings')
         for setting in settings:
-            t0 = time.perf_counter()
             col = 'idx_' + '_'.join(map(str, setting))
-            data[col], table, c = build_h1_index_boosting(data, setting, inner_scope=inner_scope, decay_of=decay_of,
-                                                          device=device, n_threads=n_threads)
+            data[col] = stage1['index'][setting]
             index_cols[setting] = col
-            stage1.append(table)
-            curves += c
-            seconds = time.perf_counter() - t0
-            timings.append({'part': 'stage1', 'fold': None, 'model': kind, 'target': setting[1], 'loss': setting[2],
-                            'hparams': boosting.hparam_tag(*setting[3:]), 'seconds': seconds})
-            log(f"지수형 ① {setting[1]} {setting[2]} {boosting.hparam_tag(*setting[3:])}: {seconds:.0f}초, "
-                f"고른 트리 {table.trees.min()}~{table.trees.max()}")
-    payload = {'data': data, 'labels': prepared['sigma_labels'], 'decay_of': decay_of, 'settings': settings, 'sets': sets,
+        hp = {boosting.hparam_tag(*s[3:]) + '|' + s[1] + '|' + s[2] for s in settings}
+        mine = lambda r: f"{r['hparams']}|{r['target']}|{r['loss']}" in hp
+        st = stage1['stage1']
+        stage1_rows = st[[mine(r) for r in st.to_dict('records')]].reset_index(drop=True)
+        curves = [c for c in stage1['curves'] if mine(c)]
+        timings = [t for t in stage1['timings'] if mine(t)]
+    payload = {'data': data, 'labels': boosting_labels(prepared), 'decay_of': decay_of, 'settings': settings, 'sets': sets,
                'index_cols': index_cols, 'inner_scope': inner_scope, 'device': device, 'n_threads': n_threads}
     done = execute_folds(_run_fold_boosting, payload, folds, workers=workers, log=log)
     out = assemble_folds(done, folds, val_keys, offsets, timings)
     out['curves'] = curves + out.get('curves', [])
     out['params'] = {k: v for f in folds for k, v in done[f['fold']]['params'].items()}
-    return {**out, 'stage1': _concat(stage1), 'inner_scope': inner_scope, 'kind': kind, 'device': device}
+    return {**out, 'stage1': stage1_rows, 'inner_scope': inner_scope, 'kind': kind, 'phase': phase, 'device': device}
 
 
 def curves_frame(curves: list[dict]) -> pd.DataFrame:
@@ -919,22 +973,24 @@ def expected_boosting_ids(kind: str, sets=BOOSTING_SETS) -> set[str]:
 
 def finalize_boosting(root: Path, config, prepared: dict, result: dict, *, started: datetime, out_root: Path | None = None,
                       require_complete: bool = True, gpu_name: str | None = None, log=print) -> dict:
-    """부스팅 한 종류의 마무리: 종료 조건 → 표·예측·곡선(parquet) 저장. 폴더 <시각>_<종류>. 선형 Huber② σ 계산 코드도 해시에 포함."""
-    kind = result['kind']
+    """부스팅 한 종류·한 단계의 마무리: 종료 조건 → 표·예측·곡선(parquet) 저장. 폴더 <시각>_<종류>_<단계>.
+    지수형 단계는 ① 표·곡선도 함께 저장한다. 선형 Huber② σ 계산 코드도 해시에 포함."""
+    kind, phase = result['kind'], result['phase']
     stage1 = result['stage1']
-    return finalize_run(root, config, prepared, result, family='boosting', folder_suffix=kind,
-                        expected_ids=expected_boosting_ids(kind),
+    return finalize_run(root, config, prepared, result, family='boosting', folder_suffix=f'{kind}_{phase}',
+                        expected_ids=expected_boosting_ids(kind, BOOSTING_PHASES[phase]),
                         code=LINEAR_CODE[:1] + ['src/models/boosting.py'] + LINEAR_CODE[1:],
-                        device={'boosting': result['device'], 'gpu': gpu_name}, part_keys=['part', 'target', 'loss', 'hparams'],
+                        device={'boosting': result['device'], 'config_device': boosting.default_device(kind),
+                                'device_matches_config': result['device'] == boosting.default_device(kind), 'gpu': gpu_name}, part_keys=['part', 'target', 'loss', 'hparams'],
                         started=started, out_root=out_root, require_complete=require_complete,
                         extra_versions=boosting.library_versions(),
                         extra_tables={'curves': (curves_frame(result['curves']), 'parquet')},
-                        extra_record={'kind': kind, 'library_params_by_setting': result.get('params', {}),
+                        extra_record={'kind': kind, 'phase': phase, 'library_params_by_setting': result.get('params', {}),
                                       'stage1_rows': int(len(stage1))}, log=log)
 
 
 def measure_boosting_fit(prepared: dict, config, setting, *, fold_no: int = 16, input_set: str = 'ind:size+bm+mom+sigma',
-                         h3_label: str = 'decay097', device: str = 'cpu', n_threads: int | None = None,
+                         h3_label: str = 'span36', device: str | None = None, n_threads: int | None = None,
                          inner_scope: str = 'common', verbose_every: int = 100, log=print) -> dict:
     """시간 측정용 학습 1회(1000트리, 100트리마다 자세한 줄). 지수형 입력은 쓰지 않는다(①이 필요해서).
     반환: 시간, 고른 트리 수, 내부 검증 IC, 학습 행 수, 내부 검증 예측(장치 간 비교용)."""
@@ -949,6 +1005,7 @@ def measure_boosting_fit(prepared: dict, config, setting, *, fold_no: int = 16, 
     lo, hi = fold['train_years']
     ctx = FoldContext(data, train & (year >= lo) & (year <= hi), scope & (year == fold['inner_valid_year']))
     kind, target, loss, depth, lr = setting
+    device = device or boosting.default_device(kind)
     cols = _columns(cols_in, h3_label, None)
     delta = ctx.q999(target) if loss == 'huber_q999' else ctx.sigma2(cols, target)['delta'] if loss == 'huber_sigma135' else None
     log(f"[측정] {kind} {target} {loss} {boosting.hparam_tag(depth, lr)} {input_set} {h3_label}, Fold {fold_no}, "
@@ -977,7 +1034,7 @@ def estimate_boosting_minutes(prepared: dict, kind: str, seconds_by_fold: dict, 
     n_a, n_b = (n_of(*next(f for f in folds if f['fold'] == k)['train_years']) for k in (f_a, f_b))
     per_fit = lambda n: s_a + (n - n_a) / (n_b - n_a) * (s_b - s_a)
     all_sets = input_sets()
-    fits_per_fold = sum(10 if 'sigma' in all_sets[s] else 1 for s in sets)
+    fits_per_fold = sum(len(boosting.H3_SPANS) if 'sigma' in all_sets[s] else 1 for s in sets)
     n_settings = len(boosting.settings(kind)) if n_settings is None else n_settings
     folds_sec = sum(per_fit(n_of(*f['train_years'])) * fits_per_fold for f in folds) * n_settings
     stage1_sec = (sum(per_fit(n_of(INDEX_TRAIN_START, Y - 2)) for Y in range(TRAIN_START, 2022)) * n_settings
@@ -1037,8 +1094,15 @@ def scipy_crosscheck(val_keys: pd.DataFrame, predictions: dict, ic: pd.DataFrame
         for scope, by_month in groups.items():
             for month, pos in by_month.items():
                 ok = np.isfinite(yhat[pos]) & np.isfinite(y[pos])
-                value = float(spearmanr(yhat[pos][ok], y[pos][ok]).statistic)
-                err = max(err, abs(value - ref.loc[(cid, scope, month)]))
+                with np.errstate(all='ignore'), warnings.catch_warnings():
+                    warnings.simplefilter('ignore')               # 상수 입력은 아래에서 결측끼리 비교
+                    value = float(spearmanr(yhat[pos][ok], y[pos][ok]).statistic)
+                mine = float(ref.loc[(cid, scope, month)])
+                if np.isnan(value) and np.isnan(mine):
+                    continue                                       # 둘 다 결측(상수 예측 등)이면 일치
+                if np.isnan(value) or np.isnan(mine):
+                    return float('inf')                            # 한쪽만 결측이면 불일치
+                err = max(err, abs(value - mine))
     return err
 
 
