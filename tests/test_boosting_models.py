@@ -189,6 +189,36 @@ class BoostingRunTests(unittest.TestCase):
             self.assertEqual((record['phase'], record['device']['boosting'], record['device']['device_matches_config']),
                              ('index', 'cpu', False))
 
+    def test_followup_depth4_separate_run(self):
+        self.assertEqual(boosting.settings('lgb_rankreg', followup=True), [('lgb_rankreg', 'percentile', 'mse', 4, 0.01)])
+        self.assertEqual(boosting.settings('xgb_reg', followup=True), [])
+        self.assertEqual(boosting.lgb_params('lgb_rankreg', 'mse', 4, 0.01)['num_leaves'], 16)
+        with self.assertRaises(ValueError):          # 회귀 종류엔 깊이 4 없음
+            boosting._check_setting('xgb_reg', 'winsor_1_99', 'mse', 4, 0.01, None)
+        boosting._check_setting('xgb_pairwise', 'decile', 'pairwise', 4, 0.01, None)
+        quiet = lambda *_: None
+        with self.assertRaises(ValueError):          # 후속이 아닌 실행에 깊이 4 설정을 넣으면 거부
+            mt.run_boosting(self.prep, CONFIG, 'lgb_rankreg', phase='individual', settings=[('lgb_rankreg', 'percentile', 'mse', 4, 0.01)],
+                            folds=[self.folds[0]], log=quiet)
+        with self.assertRaises(ValueError):
+            mt.run_boosting(self.prep, CONFIG, 'xgb_reg', phase='individual', followup=True, folds=[self.folds[0]], log=quiet)
+        r = mt.run_boosting(self.prep, CONFIG, 'lgb_rankreg', phase='individual', followup=True, folds=[self.folds[0]],
+                            n_threads=1, log=quiet)
+        self.assertEqual(set(r['selections'].hparams), {'d4_lr0.01'})
+        self.assertEqual(len(mt.expected_boosting_ids('lgb_rankreg', mt.BOOSTING_PHASES['individual'], followup=True)), 1)
+        import json
+        import tempfile
+        from datetime import datetime
+        with tempfile.TemporaryDirectory() as tmp:
+            out = mt.finalize_boosting(Path(__file__).resolve().parents[1], CONFIG, self.prep, r, started=datetime(2026, 1, 1),
+                                       out_root=Path(tmp), require_complete=False, log=quiet)
+            folder = Path(out['run_dir'])
+            self.assertEqual(folder.name, '20260101T000000_lgb_rankreg_individual_d4')
+            # 설정 1개를 다 돌렸으므로 완전한 실행으로 검사된다 → Fold 1개뿐이라 행 수·192개월 검사만 실패해야 한다
+            self.assertEqual(out['status'], 'FAILED_END_CHECKS')
+            self.assertEqual({k for k, v in out['checks'].items() if v is False}, {'validation_prediction_rows', 'all_192_months_ic'})
+            self.assertTrue(json.loads((folder / 'run.json').read_text(encoding='utf-8'))['followup'])
+
     def test_linear_ids_unchanged_and_boosting_ids(self):
         tag = {'family': 'linear', 'model': 'ols', 'target': 'raw', 'loss': 'mse', 'input_set': 'ind:bm'}
         self.assertEqual(mt.config_id(tag), 'linear|ols|raw|mse|ind:bm')

@@ -673,7 +673,7 @@ def merge_results(parts: list[dict]) -> dict:
         out['curves'] = [c for p in parts for c in p.get('curves', [])]
     if any('params' in p for p in parts):
         out['params'] = {k: v for p in parts for k, v in p.get('params', {}).items()}
-    for key in ('kind', 'phase', 'device'):                 # 부스팅: 같은 종류·단계·장치끼리만 합친다
+    for key in ('kind', 'phase', 'device', 'followup'):     # 부스팅: 같은 종류·단계·장치·후속 여부끼리만 합친다
         values = {p.get(key) for p in parts}
         if len(values) > 1:
             raise ValueError(f'parts_differ_in_{key}')
@@ -859,24 +859,32 @@ def _run_fold_boosting(fold: dict) -> dict:
             'params': params, 'seconds': time.perf_counter() - t_fold}
 
 
-def _kind_settings(kind: str, settings) -> list[tuple]:
+def _kind_settings(kind: str, settings, followup: bool = False) -> list[tuple]:
     if kind not in boosting.KINDS:
         raise ValueError('boosting_kind_unknown')
-    settings = boosting.settings(kind) if settings is None else [tuple(s) for s in settings]
-    if any(s[0] != kind for s in settings) or not set(settings) <= set(boosting.settings(kind)):
+    allowed = boosting.settings(kind, followup=followup)
+    if not allowed:
+        raise ValueError('no_followup_settings_for_kind')
+    settings = allowed if settings is None else [tuple(s) for s in settings]
+    if any(s[0] != kind for s in settings) or not set(settings) <= set(allowed):
         raise ValueError('settings_kind_mismatch')
     return settings
 
 
+def _followup_suffix(kind: str) -> str:
+    """후속 튜닝 결과 폴더 꼬리표: 깊이 4면 '_d4'."""
+    return '_d' + ''.join(str(d) for d in boosting.FOLLOWUP_DEPTHS[kind])
+
+
 def run_boosting_stage1(prepared: dict, config, kind: str, *, settings=None, inner_scope: str = 'common', device: str | None = None,
-                        n_threads: int | None = None, log=print) -> dict:
+                        n_threads: int | None = None, followup: bool = False, log=print) -> dict:
     """지수형 ①: 설정마다 2003~2021년 H1 지수(순위 [−1, 1])를 만든다. 결과는 같은 세션 메모리로 run_boosting(phase='index')에
     넘긴다(파일로 저장했다가 다시 읽지 않음). 반환: kind, settings, inner_scope, n_rows, index(설정별 배열), stage1 표, curves, timings."""
     if inner_scope not in INNER_SCOPES:
         raise ValueError('inner_scope_unknown')
     check_grid(config)
     data = prepared['data']
-    settings = _kind_settings(kind, settings)
+    settings = _kind_settings(kind, settings, followup)
     device = device or boosting.default_device(kind)
     decay_of = _decay_of(prepared)
     index, tables, curves, timings = {}, [], [], []
@@ -891,17 +899,19 @@ def run_boosting_stage1(prepared: dict, config, kind: str, *, settings=None, inn
                         'hparams': boosting.hparam_tag(*setting[3:]), 'seconds': seconds})
         log(f"지수형 ① {setting[1]} {setting[2]} {boosting.hparam_tag(*setting[3:])}: {seconds:.0f}초, "
             f"고른 트리 {table.trees.min()}~{table.trees.max()}")
-    return {'kind': kind, 'settings': settings, 'inner_scope': inner_scope, 'device': device, 'n_rows': len(data), 'index': index,
+    return {'kind': kind, 'settings': settings, 'inner_scope': inner_scope, 'device': device, 'followup': followup,
+            'n_rows': len(data), 'index': index,
             'stage1': _concat(tables), 'curves': curves, 'timings': timings}
 
 
 def run_boosting(prepared: dict, config, kind: str, *, phase: str, stage1: dict | None = None, settings=None,
                  sets: dict | None = None, folds: list[dict] | None = None, inner_scope: str = 'common', device: str | None = None,
-                 n_threads: int | None = None, workers: int = 1, log=print) -> dict:
+                 n_threads: int | None = None, workers: int = 1, followup: bool = False, log=print) -> dict:
     """한 부스팅 종류·한 단계(전체 또는 일부 설정)를 실행한다. 반환 형식은 run_linear와 같고 curves·params가 더 있다.
 
     phase='individual': [Size, B/M, Mom, σ]. phase='index': [σ]·[H1 지수]·[H1 지수, σ], 같은 세션의 run_boosting_stage1 결과가
-    필요하다(같은 종류·내부 검증 범위·자료, 설정 포함). workers>1이면 Fold를 프로세스로 나눈다(n_threads를 함께 줄일 것). 난수 없음.
+    필요하다(같은 종류·내부 검증 범위·자료, 설정 포함). followup=True면 후속 튜닝 설정(boosting.FOLLOWUP_DEPTHS)만 돌리고
+    따로 저장한다. workers>1이면 Fold를 프로세스로 나눈다(n_threads를 함께 줄일 것). 난수 없음.
     """
     if inner_scope not in INNER_SCOPES:
         raise ValueError('inner_scope_unknown')
@@ -911,7 +921,7 @@ def run_boosting(prepared: dict, config, kind: str, *, phase: str, stage1: dict 
     data = prepared['data'].copy()
     decay_of = _decay_of(prepared)
     folds = plan_folds(grid) if folds is None else folds
-    settings = _kind_settings(kind, settings)
+    settings = _kind_settings(kind, settings, followup)
     device = device or boosting.default_device(kind)       # 기본은 config 장치. 다르게 주면 run.json에 표시
     allowed = BOOSTING_PHASES[phase]
     sets = {k: v for k, v in boosting_input_sets().items() if k in allowed} if sets is None else sets
@@ -921,7 +931,8 @@ def run_boosting(prepared: dict, config, kind: str, *, phase: str, stage1: dict 
     index_cols, stage1_rows, curves, timings = {}, pd.DataFrame(), [], []
     if any('h1_index' in cols for cols in sets.values()):
         if (stage1 is None or stage1['kind'] != kind or stage1['inner_scope'] != inner_scope or stage1['device'] != device
-                or stage1['n_rows'] != len(data) or not set(settings) <= set(stage1['settings'])):
+                or stage1['n_rows'] != len(data) or stage1.get('followup', False) != followup
+                or not set(settings) <= set(stage1['settings'])):
             raise ValueError('stage1_result_required_for_same_kind_scope_device_settings')
         for setting in settings:
             col = 'idx_' + '_'.join(map(str, setting))
@@ -939,7 +950,8 @@ def run_boosting(prepared: dict, config, kind: str, *, phase: str, stage1: dict 
     out = assemble_folds(done, folds, val_keys, offsets, timings)
     out['curves'] = curves + out.get('curves', [])
     out['params'] = {k: v for f in folds for k, v in done[f['fold']]['params'].items()}
-    return {**out, 'stage1': stage1_rows, 'inner_scope': inner_scope, 'kind': kind, 'phase': phase, 'device': device}
+    return {**out, 'stage1': stage1_rows, 'inner_scope': inner_scope, 'kind': kind, 'phase': phase, 'device': device,
+            'followup': followup}
 
 
 def curves_frame(curves: list[dict]) -> pd.DataFrame:
@@ -967,25 +979,27 @@ def boosting_part_summary(result: dict) -> pd.DataFrame:
     return out.reset_index()
 
 
-def expected_boosting_ids(kind: str, sets=BOOSTING_SETS) -> set[str]:
-    return {config_id(_boost_tag(s, name)) for s in boosting.settings(kind) for name in sets}
+def expected_boosting_ids(kind: str, sets=BOOSTING_SETS, followup: bool = False) -> set[str]:
+    return {config_id(_boost_tag(s, name)) for s in boosting.settings(kind, followup=followup) for name in sets}
 
 
 def finalize_boosting(root: Path, config, prepared: dict, result: dict, *, started: datetime, out_root: Path | None = None,
                       require_complete: bool = True, gpu_name: str | None = None, log=print) -> dict:
-    """부스팅 한 종류·한 단계의 마무리: 종료 조건 → 표·예측·곡선(parquet) 저장. 폴더 <시각>_<종류>_<단계>.
+    """부스팅 한 종류·한 단계의 마무리: 종료 조건 → 표·예측·곡선(parquet) 저장. 폴더 <시각>_<종류>_<단계>(후속 튜닝은 끝에 _d4).
     지수형 단계는 ① 표·곡선도 함께 저장한다. 선형 Huber② σ 계산 코드도 해시에 포함."""
     kind, phase = result['kind'], result['phase']
+    followup = result.get('followup', False)
     stage1 = result['stage1']
-    return finalize_run(root, config, prepared, result, family='boosting', folder_suffix=f'{kind}_{phase}',
-                        expected_ids=expected_boosting_ids(kind, BOOSTING_PHASES[phase]),
+    suffix = f'{kind}_{phase}' + (_followup_suffix(kind) if followup else '')
+    return finalize_run(root, config, prepared, result, family='boosting', folder_suffix=suffix,
+                        expected_ids=expected_boosting_ids(kind, BOOSTING_PHASES[phase], followup),
                         code=LINEAR_CODE[:1] + ['src/models/boosting.py'] + LINEAR_CODE[1:],
                         device={'boosting': result['device'], 'config_device': boosting.default_device(kind),
                                 'device_matches_config': result['device'] == boosting.default_device(kind), 'gpu': gpu_name}, part_keys=['part', 'target', 'loss', 'hparams'],
                         started=started, out_root=out_root, require_complete=require_complete,
                         extra_versions=boosting.library_versions(),
                         extra_tables={'curves': (curves_frame(result['curves']), 'parquet')},
-                        extra_record={'kind': kind, 'phase': phase, 'library_params_by_setting': result.get('params', {}),
+                        extra_record={'kind': kind, 'phase': phase, 'followup': followup, 'library_params_by_setting': result.get('params', {}),
                                       'stage1_rows': int(len(stage1))}, log=log)
 
 

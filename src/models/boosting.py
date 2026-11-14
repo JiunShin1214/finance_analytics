@@ -29,6 +29,9 @@ import numpy as np
 
 LIBRARIES = ('xgboost', 'lightgbm')
 DEPTHS = (1, 2, 3)
+# 후속 튜닝(2026-11-14 결정, 한 번만): 순위 정답 3종은 깊이 1→2→3에서 IC가 계속 올라 깊이 4를 추가로 시험한다.
+# 원래 설계(DEPTHS)와 섞지 않고 따로 실행·저장한다(config MODEL_GRID.boosting_followup_depths).
+FOLLOWUP_DEPTHS = {'xgb_pairwise': (4,), 'xgb_rankreg': (4,), 'lgb_rankreg': (4,)}
 LEARNING_RATES = (0.01,)            # 2026-11-14 결정: 0.01만(config 주석)
 MAX_TREES = 1000
 MIN_HESSIAN = 0.001
@@ -61,16 +64,19 @@ def check_boosting_grid(grid: Mapping) -> None:
         'lightgbm_num_leaves': 'two_power_depth', 'min_hessian_in_leaf': MIN_HESSIAN, 'min_data_in_leaf': MIN_DATA_IN_LEAF,
         'l2': 0, 'l1': 0, 'subsample': 1.0, 'colsample': 1.0, 'max_bin': MAX_BIN, 'boosting_h3_spans': list(H3_SPANS), 'device': dict(DEVICES),
         'boosting_regression_losses': list(REGRESSION_LOSSES), 'boosting_regression_targets': list(REGRESSION_TARGETS),
+        'boosting_followup_depths': {k: list(v) for k, v in FOLLOWUP_DEPTHS.items()},
     }
     bad = [k for k, v in expected.items() if grid.get(k) != v]
     if bad:
         raise ValueError('boosting_grid_not_approved:' + ','.join(bad))
 
 
-def settings(kind: str) -> list[tuple]:
-    """한 종류의 설정 목록 (kind, target, loss, depth, learning_rate). 회귀 12개, 순위 3개."""
+def settings(kind: str, followup: bool = False) -> list[tuple]:
+    """한 종류의 설정 목록 (kind, target, loss, depth, learning_rate). 회귀 12개, 순위 3개.
+    followup=True면 후속 튜닝 설정만(FOLLOWUP_DEPTHS, 없는 종류는 빈 목록)."""
     spec = KINDS[kind]
-    return [(kind, t, l, d, lr) for t in spec['targets'] for l in spec['losses'] for d in DEPTHS for lr in LEARNING_RATES]
+    depths = FOLLOWUP_DEPTHS.get(kind, ()) if followup else DEPTHS
+    return [(kind, t, l, d, lr) for t in spec['targets'] for l in spec['losses'] for d in depths for lr in LEARNING_RATES]
 
 
 def default_device(kind: str) -> str:
@@ -90,7 +96,7 @@ def _check_setting(kind, target, loss, depth, learning_rate, delta):
     spec = KINDS[kind]
     if target not in spec['targets'] or loss not in spec['losses']:
         raise ValueError('boosting_target_or_loss_not_approved')
-    if depth not in DEPTHS or learning_rate not in LEARNING_RATES:
+    if depth not in DEPTHS + FOLLOWUP_DEPTHS.get(kind, ()) or learning_rate not in LEARNING_RATES:
         raise ValueError('boosting_hyperparameter_not_approved')
     if loss.startswith('huber'):
         if delta is None or not (math.isfinite(delta) and delta > 0):
