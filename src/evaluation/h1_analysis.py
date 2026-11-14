@@ -1,5 +1,5 @@
-"""승인 범위의 H1 특징·주성분 진단과 기술적 순위 상관 비교. 평균 검정은 별도."""
 from __future__ import annotations
+"""승인 범위의 H1 특징·주성분 진단과 기술적 순위 상관 비교. 평균 검정은 별도."""
 import hashlib
 import json
 import sys

@@ -191,24 +191,87 @@ MLP:
   shuffle: false
   early_stopping: false
   tie_rule: fewer_total_hidden_nodes_then_larger_alpha
-# 2026-11-11 사용자 결정(시험 단계): 부스팅 2×2 = {XGBoost, LightGBM} × {회귀, 순위}. MLP 항목은 그대로 둔다.
-# 회귀는 제곱오차, 순위는 lambdarank. 순위 정답은 학습 기간 안에서 매달 수익률 5분위(0~4), 그룹은 목표월.
-# 평가는 다른 모형과 같은 월별 Rank IC. 하이퍼파라미터 후보와 잘림·이득 설정 통일 여부는 미정.
-# 설치 버전 기본값(확인 2026-11-11): XGBoost rank:ndcg = pair_method topk, num_pair_per_sample 최대(사실상 전체 쌍),
-#   ndcg_exp_gain true(2^등급-1). LightGBM lambdarank = truncation_level 30(상위 30위 쌍만), label_gain 2^등급-1.
-BOOSTING:
+# 2026-11-12 사용자 결정(교수님 피드백 11-12 반영): 모델 비교 전체 설계. 검증(2006~2021)까지만, 테스트는 H2·H4 이후 최종 선택 때.
+# 원칙: 가중치는 사람이 정하지 않고 모델이 학습, 후보는 모두 돌려 보고, 조합 간에는 입력 열만 다르고 나머지는 모두 같게.
+# 근거 표기: [GKX] Gu·Kelly·Xiu(2020, RFS) 본문·인터넷 부록, [LWZ] Leippold·Wang·Zhou 중국 시장 부록,
+#   [Breiman] Stacked Regressions(1996), [LGB]/[XGB] 공식 조정 가이드·설치 버전 기본값, [자료] 이 프로젝트 결과, [결정] 근거 문헌 없는 사용자 결정.
+MODEL_GRID:
+  approved: true
+  hypotheses: [H1, H3]                      # H2·H4는 팀원 자료 이후 같은 설계로 추가
+  # --- 표본과 기간 ---
+  train_start_target_year: 2003              # 지수형 ①도 조정값을 내부 검증으로 고르므로 H1 지수는 2003년부터(①: 학습 2001·검증 2002).
+                                             # 모든 조합을 같은 행으로 맞춰 2003년부터 [결정 2026-11-13 A2]. 2001·2002는 ①의 학습·검증에만 쓰임
+  first_validation_year: 2006                # 바깥 검증 2006~2021, 16개 Fold
+  last_validation_year: 2021
+  inner_validation_years: 1                  # 학습 기간 마지막 1년으로 조정값 선택 [GKX §1.1 검증으로 선택, 길이는 결정]
+  min_inner_train_years: 5                   # 기존 최소 5년 규칙
+  min_inner_train_exceptions: [1, 2, 3]      # Fold 1~3(내부 학습 2·3·4년)은 예외로 기록 [결정]
+  tuning_selection: joint_grid_max_inner_ic  # 한 모델 안의 조정값(H3 λ × Ridge λ, H3 λ × 트리 수)은 모든 조합 중 내부 검증 IC 최고 한 쌍 [GKX §1.1, Table A.5]
+  tie_rules:                                 # 내부 검증 IC가 정확히 같을 때. 근거 문헌 없음, 11주차 "단순한 모델" 원칙 계승 [결정 2026-11-13 A4]
+    trees: fewer
+    ridge_lambda: larger
+    h3_span: longer                          # 원래 정의(0.97) 쪽. 함께 고를 때는 모델 쪽 규칙 먼저, 그다음 H3
+  refit_after_selection: false               # 고른 뒤 다시 학습하지 않음, 모든 모델 같은 학습 기간 [GKX §1.1, LWZ A.1]
+  training_rows: common_h1_h3_target         # 관측값만으로 학습: H1·H3·목표값이 모두 관측된 같은 행(조합 간 동일) [교수님 지침]
+  prediction_rows: all_stocks_with_target    # 수익률 있는 모든 종목을 예측, 빠진 특징만 이때 채움 [교수님 지침]. 평가는 전체 종목·공통 표본 둘 다
+  target_returns_unchanged: true             # 수익률 0·결측은 바꾸지 않음 [교수님 지침]
+  # --- 입력 조합 ---
+  components: [size, bm, mom, sigma]         # 원값(Size는 원부호, σ는 H3의 EWMA 변동성). 아래 변환을 거쳐 입력
+  input_transform: monthly_rank_pm1          # 매달 적격·산출 종목 안 순위(평균 동순위) r → 2r/(N+1) − 1, 범위 (−1, 1)
+                                             # [GKX 각주 29: Kelly·Pruitt·Su 2019, Freyberger·Neuhierl·Weber 2020; GKX 부록 식 A.1]
+                                             # 10·11주차 Z 점수 판은 비교군으로만 남김(2026-11-13 결정)
+  h3_fixed: {initial_returns: 10, recent_window: 12, recent_min_valid: 10, delisting_gap_reset_months: 4}   # 확정 결정, 바꾸지 않음
+  h3_lambda_learning:                        # λ만 자료로 학습. 모델·Fold마다 내부 검증으로 선택 [교수님 피드백; RiskMetrics §5.3.2도 λ를 자료로 탐색]
+    span_months: [12, 18, 24, 30, 36, 42, 48, 54, 60]   # λ = 1 − 2/(N+1) (pandas span 정의). 12 ≈ 0.846, 60 ≈ 0.967
+                                             # 범위: Blitz & van Vliet(2007) 강건성 1년 ~ 현재 값 0.97(≈Baker·Bradley·Wurgler 2011의 60개월)
+    include_current_value: 0.97              # 10번째 후보. span 66(λ 0.9701) 대신 현재 값 0.97 그대로(span ≈ 65.7개월)
+  index_transform: monthly_rank_pm1          # 지수형 H1 지수(①의 예측값)도 매달 순위 [−1,1]로 바꿔 ②에 넣음 [결정 2026-11-13]
+  missing_feature_fill: 0                    # 예측 행에서만. 순위 척도의 단면 중앙값 = 0 [채우는 값: GKX 단면 중앙값 대체, Chen·McCoy §3.3]
+  individual_sets: all_nonempty_subsets      # 개별형 15개
+  index_sets:                                # 지수형 3개, H1 지수 = 1단계 모델(Size·B/M·Mom)의 예측
+    - [h1_index]
+    - [sigma]                                # H3는 구성요소가 σ 하나라 지수 = σ(1단계 모델 없음)
+    - [h1_index, sigma]
+  index_stage1_model: same_as_stage2         # A안: 1단계와 2단계가 같은 모델·설정 [결정; Breiman은 다른 입력 묶음 쌓기 선례 아님]
+  index_stage1_out_of_sample: prior_years_expanding   # 각 해의 지수는 그 이전 해 전체로 학습한 1단계로 만듦 [Breiman 교차검증 원리]
+  # --- 회귀 모델 ---
+  regression_targets: [raw, winsor_1_99, monthly_zscore]   # [자료 11주차, Cakici·Zaremba 요약 글(원문 미확인)]
+  regression_losses: [mse, huber_q999, huber_sigma135]
+  target_transform_basis: monthly_training_rows   # 윈저 경계·월별 표준화·10분위·백분위 모두 그 달 학습 행 안에서 계산. 평가는 항상 원수익률
+  huber_q999_quantile: 0.999                 # |변환된 학습 목표값 - 그 달 평균|의 분위수, Fold 학습 행 [GKX Table A.5; 대상은 원문 미기재라 해석]
+  huber_sigma_epsilon: 1.35                  # δ = 1.35 × σ, σ는 scikit-learn HuberRegressor 방식, 조합마다 추정 [LWZ Table A.2, scikit-learn 기본값]
+                                             # 부스팅의 σ는 같은 Fold·조합·목표값의 선형 Huber(OLS) 추정값을 가져옴
+  linear_models: [ols, ridge]
+  ridge_lambdas: [0.0001, 0.001, 0.01, 0.1, 1, 10]   # GKX·LWZ 벌점 범위 10⁻⁴~10⁻¹ + 11주차에서 자주 뽑힌 1·10 [2026-11-13 A5]
+                                             # GKX 범위는 ENet(L1+L2) 기준이라 순수 Ridge와 다름. alpha = λ × 학습 행 수(기존 방식)
+  ridge_input_standardize: false             # 입력이 이미 순위 [−1,1]이라 추가 표준화 없음 [GKX와 같음; 2026-11-13]. OLS는 원래 표준화 무관
+  # --- 순위 모델 ---
+  rank_models: [lambdarank, pairwise, rank_regression]   # pairwise는 XGBoost만(LightGBM에 없음) [2026-11-13 결정, Poh 외 2020]
+  rank_label: monthly_decile_0_9             # lambdarank·pairwise 공통 [Poh 외 2020 10분위; 5분위 대체 2026-11-13]
+  rank_pairs: all                            # 두 순위 손실 모두 전체 쌍. XGB topk·쌍 수 최대, LGB truncation_level 1000 [결정; mean 추출은 OS별 결과 달라짐(XGB 문서)]
+  lambdarank_gain: exp2_minus_1              # 두 라이브러리 기본값 2^등급-1을 명시
+  rank_regression_target: monthly_percentile # 0~1, 손실 MSE(값이 묶여 Huber 불필요)
+  # --- 부스팅 설정 ---
   libraries: [xgboost, lightgbm]
-  label_grouping: target_month
-  rank_label: monthly_quintile_0_4
-  regression_objective:
-    xgboost: reg:squarederror
-    lightgbm: regression
-  rank_objective:
-    xgboost: rank:ndcg
-    lightgbm: lambdarank
-  hyperparameters: null
-  inner_validation_years: 1
-  selection_metric: mean_rank_ic
+  depths: [1, 2, 3]                          # [GKX 1~2 ∪ LWZ 1~3]
+  learning_rates: [0.01, 0.1]                # [GKX, LWZ]
+  hyperparameter_reporting: all_candidates   # 6개 모두 보고, 내부 검증으로 고르지 않음 [교수님 피드백 2]
+  max_trees: 1000                            # [GKX·LWZ 1~1000]
+  tree_count_selection: best_inner_validation_ic_over_all_trees   # 1000개 모두 학습, 인내값 없음
+  lightgbm_num_leaves: two_power_depth       # max_depth=d, num_leaves=2^d [LGB 조정 가이드]
+  min_hessian_in_leaf: 0.001                 # XGB min_child_weight, LGB min_sum_hessian_in_leaf [LGB 기본값; 0이면 lambdarank 오류]
+  min_data_in_leaf: 1
+  l2: 0                                      # GKX Algorithm 4 기본형(추가 규제 없음). GKX·LWZ·Poh 모두 L2 미조정. 규제 후보는 나중에 검토(2026-11-13)
+  l1: 0
+  subsample: 1.0                             # 표본 추출 없음 → 난수 없음
+  colsample: 1.0
+  max_bin: 256                               # XGB 기본 256, LGB 기본 255를 256으로 맞춤 [결정]
+  device: {xgboost: cuda, lightgbm: auto}    # Colab GPU, LightGBM은 GPU 불가 시 CPU. 최종 모델·prediction.csv는 CPU
+  # --- 보고와 선택 ---
+  report_metrics: [mean_ic, ic_sd, icir, ic_positive_share, r2_pct]   # 학습·바깥 검증과 그 차이, R²는 수익률 단위 예측만 [GKX 식 19]
+  report_periods: [[2006, 2010], [2011, 2021], [2018, 2021]]
+  test_list: best_per_model_family_full_inputs   # 모델 종류별 바깥 검증 IC 1등 설정(입력 H1+H3 기준)
+  primary_model: best_validation_mean_ic         # 11주차 0.005·ICIR 규칙 대체
 EVALUATION:
   method: monthly_spearman
   tie_method: average

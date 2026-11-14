@@ -23,6 +23,7 @@ Without listing_history, diagnostic EWMA works but reset is not assessed.
 from __future__ import annotations
 
 from collections import deque
+from decimal import Decimal
 from numbers import Real
 from statistics import variance
 from typing import Sequence
@@ -47,6 +48,35 @@ VALUE_COLUMNS = (
     'vol_exclusion_reason', 'h3', 'h3_available', 'h3_exclusion_reason',
     'standardization_n', 'eligibility_complete', 'listing_history_supplied',
 )
+
+# 2026-11-12 MODEL_GRID.h3_lambda_learning: λ만 후보 10개 중에서 고르고 틀(초기화 10개, 최근 12개월 중 10개,
+# 4개월 공백 초기화)은 고정. span N -> 가중치 2/(N+1), λ = 1 - 가중치(pandas span 정의). 0.97은 현재 값 그대로.
+H3_LAMBDA_SPANS = (12, 18, 24, 30, 36, 42, 48, 54, 60)
+H3_CURRENT_DECAY = 0.97
+
+
+def h3_lambda_candidates(spans: Sequence[int] = H3_LAMBDA_SPANS, current: float = H3_CURRENT_DECAY) -> DataFrame:
+    """λ 후보 표(label, span, decay, weight). 승인된 후보 밖의 값은 거부한다.
+
+    weight는 새 관측의 가중치(1-λ). span은 2/(N+1)을 직접 쓰고, 0.97은 십진수로 1-0.97=0.03을 만들어
+    기존 계산(.97*v + .03*r²)과 비트 단위로 같게 한다.
+    """
+    if tuple(spans) != H3_LAMBDA_SPANS or current != H3_CURRENT_DECAY:
+        raise ValueError('H3 λ candidates must match MODEL_GRID.h3_lambda_learning')
+    rows = [(f'span{n}', float(n), 1 - 2 / (n + 1), 2 / (n + 1)) for n in spans]
+    rows.append(('decay' + repr(current).replace('.', ''),2 / (1 - current) - 1, current, float(Decimal('1') - Decimal(repr(current)))))
+    return DataFrame(rows, columns=['label', 'span', 'decay', 'weight'])
+
+
+def _decay_weight(decay) -> float:
+    """승인된 λ의 가중치. 후보 밖이면 거부."""
+    if isinstance(decay, (bool, np.bool_)) or not isinstance(decay, Real):
+        raise ValueError('changed decay')
+    table = h3_lambda_candidates()
+    match = table.loc[table['decay'].eq(float(decay)), 'weight']
+    if len(match) != 1:
+        raise ValueError('decay is not an approved H3 λ candidate')
+    return float(match.iloc[0])
 
 
 def _return_value(value) -> float:
@@ -78,7 +108,8 @@ def update_ewma_state(previous_variance: float, current_return: float | None, *,
     normalize_month([previous_month, current_month])
     if pd.Period(current_month, freq='M') != pd.Period(previous_month, freq='M') + 1:
         raise ValueError('state updates must advance exactly one calendar month')
-    if (decay != .97 or isinstance(previous_variance, (bool, np.bool_))
+    weight = _decay_weight(decay)
+    if (isinstance(previous_variance, (bool, np.bool_))
             or not isinstance(previous_variance, Real)
             or not math.isfinite(previous_variance) or previous_variance < 0):
         raise ValueError('invalid variance or changed decay')
@@ -86,7 +117,7 @@ def update_ewma_state(previous_variance: float, current_return: float | None, *,
     if math.isnan(value):
         return float(previous_variance)
     try:
-        result = .97 * previous_variance + .03 * value ** 2
+        result = float(decay) * previous_variance + weight * value ** 2
     except OverflowError as exc:
         raise ValueError('nonfinite updated variance') from exc
     if not math.isfinite(result):
@@ -137,11 +168,19 @@ def _calendar(stock, requested, r, history):
     return pd.period_range(min(starts), last, freq='M').astype(str).tolist(), dict(zip(obs['month'], obs['return']))
 
 
-def _state_history(r, b, history):
-    records = []
+def _state_history(r, b, history, decays=(H3_CURRENT_DECAY,)):
+    """달력 상태 이력. decays가 여럿이면 같은 경로(초기화·보류·공백 초기화)에서 λ별 v를 함께 갱신한다.
+
+    상태 표의 v는 decays[0] 기준. 반환: (상태 표, λ별 v 행렬[행=상태 표 행, 열=decays]).
+    초기 분산·관측 여부·최근 개수는 λ와 무관하므로 한 번만 계산한다.
+    """
+    decay_arr = np.array([float(d) for d in decays])
+    weight_arr = np.array([_decay_weight(d) for d in decays])
+    records, grid = [], []
     for stock, requested in b.groupby('stock_id', sort=True):
         calendar, observations = _calendar(stock, requested, r, history)
         initial, recent = [], deque(maxlen=12)
+        vs = np.full(len(decays), math.nan)
         v, tau, previous = math.nan, None, None
         seen, gap, segment, n_valid = False, 0, 0, 0
         gap_basis = []
@@ -163,6 +202,7 @@ def _state_history(r, b, history):
                     reset = gap == 4
                 if reset:
                     v, tau, initial, n_valid = math.nan, None, [], 0
+                    vs = np.full(len(decays), math.nan)
                     recent.clear()
                     segment += 1
                     reset_basis = ' | '.join(gap_basis)
@@ -177,20 +217,30 @@ def _state_history(r, b, history):
                     initial.append(value)
                     if len(initial) == 10:
                         v = initialize_ewma_state(initial)
+                        vs = np.full(len(decays), v)
                         tau, initialized_now, action = month, True, 'initialize'
             else:
-                v = update_ewma_state(v, value, previous_month=previous, current_month=month)
-                action = 'hold' if math.isnan(value) else 'update'
+                if pd.Period(month, freq='M') != pd.Period(previous, freq='M') + 1:
+                    raise ValueError('state updates must advance exactly one calendar month')
+                if math.isnan(value):
+                    action = 'hold'
+                else:
+                    vs = decay_arr * vs + weight_arr * (value ** 2)
+                    if not np.isfinite(vs).all():
+                        raise ValueError('nonfinite updated variance')
+                    action = 'update'
+                v = float(vs[0])
             records.append((stock, month, value, month in observations, math.isfinite(v),
                             initialized_now, tau, n_valid, v, action, sum(recent), reset,
                             'actual_unlisted_4_calendar_months' if reset else '', reset_basis,
                             listed, gap, segment))
+            grid.append(vs.copy())
             previous = month
     result = DataFrame.from_records(records, columns=STATE_COLUMNS)
     for col in ('initialized', 'initialized_this_month', 'reset', 'observed_row'):
         result[col] = result[col].astype(bool)
     result['is_listed'] = pd.array(result['is_listed'], dtype='boolean')
-    return result
+    return result, np.array(grid, dtype=float).reshape(len(records), len(decays))
 
 
 def _monthly_flags(features):
@@ -253,12 +303,14 @@ def calculate_h3_ewma_feature(returns: DataFrame, base_keys: DataFrame, *, decay
     """Same-pass calendar states in attrs['state_history']; optional history keyword.
 
     See module contract for column schemas, identity, whole-month listing semantics
-    and diagnostic/PIT distinction. Fixed research parameters cannot be retuned.
+    and diagnostic/PIT distinction. decay는 h3_lambda_candidates()의 10개 중 하나(기본 0.97),
+    12·10은 고정. validate_h3_contract는 0.97 결과만 검산한다.
     """
-    if decay != .97 or recent_window != 12 or recent_min_valid != 10:
-        raise ValueError('H3 parameters are fixed at 0.97, 12, 10')
+    if recent_window != 12 or recent_min_valid != 10:
+        raise ValueError('H3 window parameters are fixed at 12, 10')
+    _decay_weight(decay)
     r, b, history = _inputs(returns, base_keys, listing_history)
-    states = _state_history(r, b, history)
+    states, _ = _state_history(r, b, history, decays=(decay,))
     features = b.merge(states.loc[:, ['stock_id', 'base_month', 'v', 'initialized',
                                      'recent_valid_count']],
                        on=['stock_id', 'base_month'], how='left', validate='one_to_one', sort=False)
@@ -294,6 +346,40 @@ def compute_h3_from_panel(panel: DataFrame, eligibility: DataFrame, *, last_base
     features = features.copy()
     features.attrs = {}
     return features, states, history, returns
+
+
+def compute_h3_sigma_grid(panel: DataFrame, eligibility: DataFrame, *, last_base_month: str = '2021-11',
+                          candidates: DataFrame | None = None) -> DataFrame:
+    """λ 후보 10개의 σ를 한 번의 상태 계산으로 만든다(model_test 입력).
+
+    입력·달력·초기화·공백 초기화는 compute_h3_from_panel과 같다. 반환 열: stock_id, base_month, eligible,
+    initialized, recent_valid_count, vol_available, sigma_<label>(후보 순서). vol_available은 λ와 무관하고,
+    σ는 산출 가능할 때만 값이 있다. attrs['h3_lambda_candidates']에 후보 표.
+    """
+    from src.preprocessing.listing import kospi_listing_history
+    if 'y' in panel:
+        raise ValueError('h3_input_must_not_include_targets')
+    candidates = h3_lambda_candidates() if candidates is None else candidates
+    expected = h3_lambda_candidates()
+    if not candidates[['label', 'decay', 'weight']].equals(expected[['label', 'decay', 'weight']]):
+        raise ValueError('H3 λ candidates must match MODEL_GRID.h3_lambda_learning')
+    returns = panel[['stock_id', 'month', 'return']].copy()
+    returns.attrs['units'] = {'return': 'decimal'}
+    keys = panel.loc[panel.month.le(last_base_month), ['stock_id', 'month', 'eligible']].rename(columns={'month': 'base_month'})
+    history = kospi_listing_history(eligibility, panel)
+    r, b, history = _inputs(returns, keys, history)
+    states, grid = _state_history(r, b, history, decays=tuple(candidates['decay']))
+    labels = [f'sigma_{x}' for x in candidates['label']]
+    states = pd.concat([states[['stock_id', 'base_month', 'initialized', 'recent_valid_count']],
+                        DataFrame(grid, columns=labels, index=states.index)], axis=1)
+    out = b.merge(states, on=['stock_id', 'base_month'], how='left', validate='one_to_one', sort=False)
+    out['vol_available'] = out['initialized'] & out['recent_valid_count'].ge(10)
+    for col in labels:
+        out[col] = np.sqrt(out[col]).where(out['vol_available'])
+    out = out[['stock_id', 'base_month', 'eligible', 'initialized', 'recent_valid_count', 'vol_available', *labels]]
+    out = out.sort_values(['stock_id', 'base_month']).reset_index(drop=True)
+    out.attrs['h3_lambda_candidates'] = candidates.copy()
+    return out
 
 
 def h3_output_table(features: DataFrame, states: DataFrame) -> DataFrame:
