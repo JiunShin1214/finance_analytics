@@ -193,22 +193,45 @@ def compare_sigma_to_h3(grid: pd.DataFrame, h3: pd.DataFrame, *, atol: float) ->
             'sigma_decay097_max_abs_diff': max_diff, 'sigma_decay097_values_differ': int((diff > 0).sum())}
 
 
-RESERVED_FEATURES = set(COMPONENTS) | {'h1_index'}
+RESERVED_FEATURES = set(COMPONENTS) | {'h1_index', 'h2_index', 'observed', 'train', 'predict'}
+FEATURE_TRANSFORMS = ('rank', 'none')     # rank = 매달 순위 [−1, 1](기본), none = 값 그대로(순위 변환 예외, H2 debt·policy_x_debt)
+INDEX_TRANSFORMS = ('rank', 'centered_raw')
+TARGET_COLUMNS = TARGETS + RANK_TARGETS
 
 
-def load_extra_feature(root: Path, name: str, path) -> pd.DataFrame:
-    """팀원이 만든 특징 파일(data/ 아래 parquet) 읽기·검사. 열: stock_id, base_month(YYYY-MM), <name>(없으면 NaN).
-    종목 × 기준월 한 줄, 기준월 2000-12~2021-11만(그 뒤는 테스트 기간이라 거부). t월 말에 알 수 있던 값인지는 만든 사람 책임."""
-    if not name.isidentifier() or name in RESERVED_FEATURES or name.startswith(('x_', 't_', 'idx_')):
-        raise ValueError(f'feature_name_not_allowed:{name}')
+def feature_spec(spec) -> dict:
+    """특징 지정 → {'path', 'column', 'transform'}. 문자열이면 경로(열 이름 = 특징 이름, 순위 변환)."""
+    spec = {'path': spec} if isinstance(spec, (str, Path)) else dict(spec)
+    if set(spec) - {'path', 'column', 'transform'} or 'path' not in spec:
+        raise ValueError('feature_spec_keys')
+    spec['path'] = Path(spec['path']).as_posix()
+    spec.setdefault('transform', 'rank')
+    if spec['transform'] not in FEATURE_TRANSFORMS:
+        raise ValueError('feature_transform_unknown:' + str(spec['transform']))
+    return spec
+
+
+def _data_path(path) -> Path:
     rel = Path(path)
     if rel.is_absolute() or not rel.as_posix().startswith('data/'):
         raise PermissionError(f'feature_file_must_be_under_data:{rel.as_posix()}')
-    f = pd.read_parquet(root / rel)
-    need = {'stock_id', 'base_month', name}
+    return rel
+
+
+def load_extra_feature(root: Path, name: str, path, *, column: str | None = None, frame: pd.DataFrame | None = None) -> pd.DataFrame:
+    """팀원이 만든 특징 파일(data/ 아래 parquet) 읽기·검사. 열: stock_id, base_month(YYYY-MM), <column>(기본 = name, 없으면 NaN).
+    종목 × 기준월 한 줄, 기준월 2000-12~2021-11만(그 뒤는 테스트 기간이라 거부). t월 말에 알 수 있던 값인지는 만든 사람 책임.
+    한 파일에서 여러 열을 받을 때는 frame(이미 읽은 표)을 넘겨 파일을 한 번만 읽는다. 반환 열 이름은 name."""
+    if (not name.isidentifier() or name in RESERVED_FEATURES or name.startswith(('x_', 't_', 'idx_', 'base_'))
+            or name.endswith('_index')):
+        raise ValueError(f'feature_name_not_allowed:{name}')
+    rel = _data_path(path)
+    column = column or name
+    f = pd.read_parquet(root / rel) if frame is None else frame
+    need = {'stock_id', 'base_month', column}
     if not need <= set(f.columns):
         raise ValueError(f'feature_columns_missing:{name}:' + ','.join(sorted(need - set(f.columns))))
-    f = f[['stock_id', 'base_month', name]].copy()
+    f = f[['stock_id', 'base_month', column]].rename(columns={column: name}).copy()
     f['stock_id'] = f.stock_id.astype(str)
     f['base_month'] = f.base_month.astype(str)
     if not f.base_month.str.fullmatch(r'\d{4}-\d{2}').all():
@@ -223,17 +246,29 @@ def load_extra_feature(root: Path, name: str, path) -> pd.DataFrame:
     return f[f.base_month.ge(BASE_FIRST)]
 
 
-def add_extra_features(data: pd.DataFrame, features: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """특징 표들을 붙인다: 매달 적격·관측 종목 안 순위 [−1, 1](x_<이름>). 학습 행은 새 특징까지 모두 관측된 행만
-    (2026-11-15 결정 A, 교수님 지침 "학습은 관측값만"), 예측 행은 그대로(빈 특징은 예측 때 0). 학습 행이 바뀌므로 목표값
-    변환(윈저·월별 표준화·10분위·백분위)을 새 학습 행 안에서 다시 만든다. 반환: (새 표, 연도별 관측 비율 표)."""
+def add_extra_features(data: pd.DataFrame, features: dict, *, transforms: dict | None = None,
+                       train_start_year: int | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """특징 표들을 붙인다: 매달 적격·관측 종목 안 순위 [−1, 1](x_<이름>). transforms[이름] = 'none'이면 값 그대로(순위 변환 예외,
+    config H2.model_test). 학습 행은 새 특징까지 모두 관측된 행만(2026-11-15 결정 A, 교수님 지침 "학습은 관측값만"), 예측 행은
+    그대로(빈 특징은 예측 때 0). 학습 행이 바뀌므로 목표값 변환(윈저·월별 표준화·10분위·백분위)을 관측 행 안에서 다시 만든다.
+    observed = 새 특징까지 관측된 모든 해의 행(붙인 지수 ①의 학습용). train_start_year를 주면 ②의 학습 행(train)은 그 목표연도부터
+    (H2: 2004, 2026-11-15 결정). 기존 학습 행·목표값은 base_train·base_t_<목표값>으로 남긴다(H1 지수 ①은 기존 행 그대로).
+    반환: (새 표, 연도별 관측 비율 표)."""
     d = data.copy()
+    transforms = transforms or {}
+    if 'base_train' not in d:
+        d['base_train'] = d.train
+        for name in TARGET_COLUMNS:
+            d['base_t_' + name] = d['t_' + name]
     elig = d.eligible.eq(True).fillna(False).to_numpy(bool)
     coverage = []
     for name, f in features.items():
         merged = d[['stock_id', 'base_month']].merge(f, on=['stock_id', 'base_month'], how='left', validate='one_to_one')
         avail = merged[name].notna().to_numpy() & elig
-        d['x_' + name] = rank_pm1(merged[name], avail, d.base_month)
+        if transforms.get(name, 'rank') == 'none':
+            d['x_' + name] = np.where(avail, merged[name].to_numpy(float), np.nan)
+        else:
+            d['x_' + name] = rank_pm1(merged[name], avail, d.base_month)
         d[name + '_available'] = avail
         before = d.train.to_numpy(bool)
         d['train'] = before & avail
@@ -241,15 +276,22 @@ def add_extra_features(data: pd.DataFrame, features: dict) -> tuple[pd.DataFrame
             coverage.append({'feature': name, 'target_year': int(y_), 'predict_rows': int(g.predict.sum()),
                              'available_share_of_predict': float((g.predict & g[name + '_available']).sum() / max(1, g.predict.sum())),
                              'train_rows_before': int(before[g.index].sum()), 'train_rows_after': int(d.train[g.index].sum())})
-    for name, arr in monthly_target_transforms(d.y, d.train.to_numpy(), d.target_month).items():
+    d['observed'] = d.train
+    for name, arr in monthly_target_transforms(d.y, d.observed.to_numpy(), d.target_month).items():
         d['t_' + name] = arr
+    if train_start_year is not None:
+        d['train'] = d.observed & d.year.ge(int(train_start_year))
     return d, pd.DataFrame(coverage)
 
 
-def prepare_inputs(root: Path, config, *, h3_grid: pd.DataFrame | None = None, extra_features: dict | None = None) -> dict:
+def prepare_inputs(root: Path, config, *, h3_grid: pd.DataFrame | None = None, extra_features: dict | None = None,
+                   indexes: dict | None = None, train_start_year: int | None = None) -> dict:
     """공유 표 4개(+ 팀원 특징 파일)만 읽어 메모리 입력을 만든다. 반환 dict: data(종목×월 표), sigma_labels, checks, inputs(해시).
 
-    extra_features = {이름: 'data/processed/<파일>.parquet'}. 주면 학습 행이 새 특징까지 관측된 행으로 줄어든다(예측 행은 그대로).
+    extra_features = {이름: 'data/processed/<파일>.parquet' 또는 {'path', 'column', 'transform'}}. 주면 학습 행이 새 특징까지
+    관측된 행으로 줄어든다(예측 행은 그대로). 한 파일에서 여러 열을 받을 수 있다(파일은 한 번만 읽고 해시도 한 번).
+    indexes = {'<이름>_index': {'parts': [특징…], 'transform': 'rank'|'centered_raw'}}: 붙인 특징으로 만드는 지수형 지수(①).
+    train_start_year: ② 학습 시작 목표연도. H2는 h2_inputs(config)가 세 인자를 config에서 만든다.
     """
     check_grid(config)
     verify_no_test_access(stage='validate', declared_target_years=list(range(2001, 2022)), source_scope_verified=True)
@@ -270,18 +312,64 @@ def prepare_inputs(root: Path, config, *, h3_grid: pd.DataFrame | None = None, e
     checks = compare_sigma_to_h3(g, h3, atol=float(config['REPRODUCIBILITY_PREDICTION_ATOL']))
     data = build_model_data(comp, g, panel[['stock_id', 'month', 'return']], labels, units=config['UNITS'])
     coverage = pd.DataFrame()
-    if extra_features:
-        feats = {n: load_extra_feature(root, n, path) for n, path in extra_features.items()}
-        inputs.update({Path(path).as_posix(): sha256(root / path) for path in extra_features.values()})
-        data, coverage = add_extra_features(data, feats)
+    specs = {n: feature_spec(s) for n, s in (extra_features or {}).items()}
+    indexes = check_indexes(indexes or {}, specs)
+    if specs:
+        files = {s['path']: pd.read_parquet(root / _data_path(s['path'])) for s in specs.values()}
+        feats = {n: load_extra_feature(root, n, s['path'], column=s.get('column'), frame=files[s['path']]) for n, s in specs.items()}
+        inputs.update({path: sha256(root / path) for path in files})
+        data, coverage = add_extra_features(data, feats, transforms={n: s['transform'] for n, s in specs.items()},
+                                            train_start_year=train_start_year)
+    elif train_start_year is not None or indexes:
+        raise ValueError('train_start_or_indexes_need_extra_features')
     val = data[data.predict & data.year.between(2006, 2021)]
     checks.update(validation_prediction_rows=int(len(val)), validation_prediction_rows_all_eligible=bool(val.eligible.eq(True).all()),
                   training_rows_2003_2021=int(data.train[data.year >= TRAIN_START].sum()),
                   training_rows_2001_2021=int(data.train.sum()))
     if len(val) != EXPECTED_VALIDATION_PREDICTION_ROWS or not checks['validation_prediction_rows_all_eligible']:
         raise ValueError('validation_prediction_rows_changed')
-    return {'data': data, 'sigma_labels': labels, 'lambda_candidates': cand, 'checks': checks, 'inputs': inputs,
-            'extra_features': dict(extra_features or {}), 'feature_coverage': coverage}
+    if train_start_year is not None:
+        checks['train_start_target_year'] = int(train_start_year)
+    out = {'data': data, 'sigma_labels': labels, 'lambda_candidates': cand, 'checks': checks, 'inputs': inputs,
+           'extra_features': {n: (s['path'] if s['transform'] == 'rank' and not s.get('column') else s) for n, s in specs.items()},
+           'feature_coverage': coverage}
+    if indexes:
+        out['indexes'] = indexes
+    if train_start_year is not None:
+        out['train_start_year'] = int(train_start_year)
+    return out
+
+
+def check_indexes(indexes: dict, specs: dict) -> dict:
+    """붙인 지수 지정 검사: 이름은 <이름>_index(h1_index 제외), 구성요소는 붙인 특징, 변환은 rank·centered_raw."""
+    out = {}
+    for name, spec in indexes.items():
+        parts = list(spec.get('parts', []))
+        if not name.endswith('_index') or name == 'h1_index' or not parts or not set(parts) <= set(specs):
+            raise ValueError(f'index_spec_invalid:{name}')
+        if spec.get('transform', 'rank') not in INDEX_TRANSFORMS:
+            raise ValueError(f'index_transform_unknown:{name}')
+        out[name] = {'parts': parts, 'transform': spec.get('transform', 'rank')}
+    return out
+
+
+def h2_inputs(config) -> dict:
+    """config H2 칸 → prepare_inputs 인자(extra_features·indexes·train_start_year). 정의는 팀원 구현 그대로(2026-11-15 결정):
+    debt·policy_x_debt는 순위 변환 예외(z 그대로), H2 지수는 ① 예측 − ①(입력 0) 예측, ② 학습은 2004년부터."""
+    h2 = config['H2']['model_test']
+    path = config['PATHS']['h2']
+    return {'extra_features': {n: {'path': path, 'transform': h2['input_transform_exception']} for n in h2['features']},
+            'indexes': {'h2_index': {'parts': list(h2['index_parts']), 'transform': h2['index_transform']}},
+            'train_start_year': int(h2['train_start_target_year'])}
+
+
+def h2_input_sets(config) -> dict:
+    """config H2 입력 조합 → {'individual': {조합 이름: 열}, 'index': {...}}. 각각 H2를 넣은 조합 + 같은 행의 비교용 조합."""
+    s = config['H2']['model_test']['input_sets']
+    comp = [list(c) for c in s['comparison']]
+    pick = lambda idx: [c for c in comp if any(x.endswith('_index') for x in c) == idx]   # noqa: E731
+    return {'individual': dict(make_input_set(c) for c in [s['individual'], *pick(False)]),
+            'index': dict(make_input_set(c) for c in [s['index'], *pick(True)])}
 
 
 def feature_names(prepared: dict) -> list[str]:
@@ -290,19 +378,25 @@ def feature_names(prepared: dict) -> list[str]:
 
 
 def make_input_set(columns) -> tuple[str, list[str]]:
-    """특징 목록 → (조합 이름, 목록). 예: ['size', 'bm', 'mom', 'sigma', 'h2'] → ('ind:size+bm+mom+sigma+h2', ...)."""
+    """특징 목록 → (조합 이름, 목록). 예: ['size', 'bm', 'mom', 'sigma', 'h2'] → ('ind:size+bm+mom+sigma+h2', ...),
+    ['h1_index', 'sigma', 'h2_index'] → ('idx:h1+sigma+h2', ...)."""
     cols = list(columns)
     if not cols or len(set(cols)) != len(cols):
         raise ValueError('input_set_empty_or_duplicate')
-    if 'h1_index' in cols:
-        name = 'idx:' + '+'.join('h1' if c == 'h1_index' else c for c in cols)
+    if any(c.endswith('_index') for c in cols):
+        name = 'idx:' + '+'.join(c[:-len('_index')] if c.endswith('_index') else c for c in cols)
     else:
         name = 'ind:' + '+'.join(cols)
     return name, cols
 
 
+def index_specs(prepared: dict) -> dict:
+    """쓸 수 있는 지수: H1 지수(항상, 매달 순위) + 붙인 지수(H2 등)."""
+    return {'h1_index': {'parts': list(H1_PARTS), 'transform': 'rank'}, **prepared.get('indexes', {})}
+
+
 def check_input_sets(sets: dict, prepared: dict) -> None:
-    allowed = set(feature_names(prepared)) | {'h1_index'}
+    allowed = set(feature_names(prepared)) | set(index_specs(prepared))
     for name, cols in sets.items():
         bad = [c for c in cols if c not in allowed]
         if bad:
@@ -430,13 +524,13 @@ def _design(data: pd.DataFrame, columns: list[str], rows: np.ndarray, *, fill: b
     return X
 
 
-def _columns(input_cols: list[str], label: str | None, index_col: str | None) -> list[str]:
+def _columns(input_cols: list[str], label: str | None, index_cols: dict | None) -> list[str]:
     out = []
     for c in input_cols:
         if c == 'sigma':
             out.append('x_sigma_' + label)
-        elif c == 'h1_index':
-            out.append(index_col)
+        elif c.endswith('_index'):
+            out.append((index_cols or {})[c])
         else:
             out.append('x_' + c)
     return out
@@ -490,14 +584,14 @@ class FoldContext:
         return self._sigma[key]
 
 
-def select_and_fit(ctx: FoldContext, *, model, target, loss, input_cols, sigma_labels, decay_of, index_col=None):
+def select_and_fit(ctx: FoldContext, *, model, target, loss, input_cols, sigma_labels, decay_of, index_cols=None):
     """한 Fold·한 설정의 조정값 선택. 모든 후보가 같은 학습 행(ctx.fit_rows)으로 학습하고 내부 검증은 원수익률로 평가.
     반환: (선택 결과 dict, 후보별 내부 IC 목록)."""
     has_sigma = 'sigma' in input_cols
     y_fit = ctx.y(target)
     results, warm = [], {}
     for cand in _candidates(model, sigma_labels if has_sigma else None, decay_of):
-        cols = _columns(input_cols, cand['h3_label'], index_col)
+        cols = _columns(input_cols, cand['h3_label'], index_cols)
         X = ctx.X(cols, 'fit')
         delta, sig = None, None
         if loss == 'huber_q999':
@@ -522,30 +616,80 @@ def select_and_fit(ctx: FoldContext, *, model, target, loss, input_cols, sigma_l
     return {**chosen, 'ties': ties, 'n_train': ctx.n_train, 'train_rows_sha256': ctx.rows_sha256}, table
 
 
-def build_h1_index(data, *, model, target, loss, inner_scope, decay_of, years=range(TRAIN_START, 2022)):
-    """지수형 ①. 해 Y의 지수 = 2001~Y−2 학습 행으로 맞추고 Y−1 내부 검증으로 조정값을 고른 ①의 예측(재학습 없음).
+def _index_frame(data: pd.DataFrame, name: str) -> pd.DataFrame:
+    """지수 ①이 학습할 표. H1 지수: 기존 학습 행·목표값(base_*, 특징을 붙였을 때만 있음) → 기존 실험과 같은 지수(2026-11-15 결정).
+    붙인 지수(H2 등): 새 특징까지 관측된 모든 해의 행(observed) — ② 학습 시작 연도 이전 해도 ① 학습에는 쓴다."""
+    if name == 'h1_index':
+        if 'base_train' not in data:
+            return data
+        return data.assign(train=data.base_train, **{'t_' + t: data['base_t_' + t] for t in TARGET_COLUMNS})
+    return data.assign(train=data.observed)
 
-    지수는 H1 구성요소 3개가 모두 있는 적격 행에만 만들고, 매달 그 행 안 순위 [−1, 1]로 바꾼다. 반환: (순위 지수 배열, 선택 표).
-    """
-    raw_index = np.full(len(data), np.nan)
-    year = data.year.to_numpy()
-    train = data.train.to_numpy(bool)
-    scope = data.predict.to_numpy(bool) if inner_scope == 'full' else train
-    h1 = data.h1_available.to_numpy(bool)
+
+def _index_member(data: pd.DataFrame, name: str, parts: list[str]) -> np.ndarray:
+    """지수를 만드는 행: 구성요소가 모두 있는 적격 행."""
+    if name == 'h1_index':
+        return data.h1_available.to_numpy(bool)
+    return np.logical_and.reduce([data[p + '_available'].to_numpy(bool) for p in parts])
+
+
+def index_years(data: pd.DataFrame) -> range:
+    """① 지수를 만들 해: ② 학습 첫해(기본 2003, H2 실험 2004)~2021."""
+    first = int(data.year[data.train].min()) if data.train.any() else TRAIN_START
+    return range(max(TRAIN_START, first), 2022)
+
+
+def _finish_index(raw: np.ndarray, data: pd.DataFrame, transform: str) -> np.ndarray:
+    if transform == 'rank':
+        member = np.isfinite(raw)
+        return rank_pm1(pd.Series(raw), member, data.base_month.reset_index(drop=True))
+    return raw                         # centered_raw: 빈 행은 NaN → 예측 때 0(= ①에 입력 0을 넣은 예측)
+
+
+def build_index(data, name: str, spec: dict, *, model, target, loss, inner_scope, decay_of, years=None):
+    """지수형 ① 일반형. 해 Y의 지수 = 2001~Y−2 학습 행으로 맞추고 Y−1 내부 검증으로 조정값을 고른 ①(②와 같은 모델·목표값·손실)의
+    예측(재학습 없음). 구성요소(spec['parts'])가 모두 있는 적격 행에만 만든다.
+    transform: rank = 매달 그 행 안 순위 [−1, 1](H1), centered_raw = ① 예측 − ①(입력 0) 예측(선형은 절편을 뺀 값, H2 — 순위로
+    바꾸면 정책 세기가 사라져서, 2026-11-15 결정). 반환: (지수 배열, 선택 표)."""
+    d = _index_frame(data, name)
+    parts = list(spec['parts'])
+    years = index_years(data) if years is None else years
+    raw_index = np.full(len(d), np.nan)
+    year = d.year.to_numpy()
+    train = d.train.to_numpy(bool)
+    scope = d.predict.to_numpy(bool) if inner_scope == 'full' else train
+    member = _index_member(d, name, parts)
     rows = []
     for Y in years:
-        target_rows = h1 & (year == Y)
-        ctx = FoldContext(data, train & (year >= INDEX_TRAIN_START) & (year <= Y - 2), scope & (year == Y - 1), target_rows)
-        chosen, _ = select_and_fit(ctx, model=model, target=target, loss=loss, input_cols=list(H1_PARTS),
+        target_rows = member & (year == Y)
+        ctx = FoldContext(d, train & (year >= INDEX_TRAIN_START) & (year <= Y - 2), scope & (year == Y - 1), target_rows)
+        chosen, _ = select_and_fit(ctx, model=model, target=target, loss=loss, input_cols=parts,
                                    sigma_labels=None, decay_of=decay_of)
-        raw_index[target_rows] = linear.predict_linear(chosen['fitted'], _design(data, chosen['columns'], target_rows, fill=False))
-        rows.append({'index_year': Y, 'model': model, 'target': target, 'loss': loss, 'stage1_train_years': f'{INDEX_TRAIN_START}~{Y-2}',
-                     'stage1_inner_valid_year': Y - 1, 'ridge_lambda': chosen['ridge_lambda'], 'inner_ic': chosen['inner_ic'],
-                     'ties': chosen['ties'], 'n_train': chosen['n_train'], 'intercept': chosen['fitted']['intercept'],
-                     **{'w_' + p: w for p, w in zip(H1_PARTS, chosen['fitted']['coef'])}})
-    member = np.isfinite(raw_index)
-    ranked = rank_pm1(pd.Series(raw_index), member, data.base_month.reset_index(drop=True))
-    return ranked, pd.DataFrame(rows)
+        pred = linear.predict_linear(chosen['fitted'], _design(d, chosen['columns'], target_rows, fill=False))
+        center = 0.0
+        if spec['transform'] == 'centered_raw':
+            center = float(linear.predict_linear(chosen['fitted'], np.zeros((1, len(parts))))[0])
+            pred = pred - center
+        raw_index[target_rows] = pred
+        row = {'index_year': Y, 'model': model, 'target': target, 'loss': loss, 'stage1_train_years': f'{INDEX_TRAIN_START}~{Y-2}',
+               'stage1_inner_valid_year': Y - 1, 'ridge_lambda': chosen['ridge_lambda'], 'inner_ic': chosen['inner_ic'],
+               'ties': chosen['ties'], 'n_train': chosen['n_train'], 'intercept': chosen['fitted']['intercept'],
+               **{'w_' + p: w for p, w in zip(parts, chosen['fitted']['coef'])}}
+        if name != 'h1_index':
+            row.update(index=name, center=center)
+        rows.append(row)
+    return _finish_index(raw_index, d, spec['transform']), pd.DataFrame(rows)
+
+
+def build_h1_index(data, *, model, target, loss, inner_scope, decay_of, years=range(TRAIN_START, 2022)):
+    """지수형 ① H1 지수: Size·B/M·Mom → 매달 순위 [−1, 1]. 반환: (순위 지수 배열, 선택 표)."""
+    return build_index(data, 'h1_index', {'parts': list(H1_PARTS), 'transform': 'rank'}, model=model, target=target, loss=loss,
+                       inner_scope=inner_scope, decay_of=decay_of, years=years)
+
+
+def index_column(name: str, setting) -> str:
+    """지수 열 이름. H1은 예전 이름 그대로(idx_<설정>), 붙인 지수는 <이름>_<설정>."""
+    return ('idx_' if name == 'h1_index' else name + '_') + '_'.join(map(str, setting))
 
 
 def linear_settings():
@@ -597,7 +741,7 @@ def _run_fold(fold: dict) -> dict:
             t0 = time.perf_counter()
             chosen, table = select_and_fit(ctx, model=model, target=target, loss=loss, input_cols=cols,
                                            sigma_labels=p['labels'], decay_of=p['decay_of'],
-                                           index_col=p['index_cols'].get((model, target, loss)))
+                                           index_cols=p['index_cols'].get((model, target, loss)))
             tag = {'family': 'linear', 'model': model, 'target': target, 'loss': loss, 'input_set': set_name, 'fold': fold['fold']}
             f = chosen['fitted']
             preds[config_id(tag)] = linear.predict_linear(f, ctx.X(chosen['columns'], 'out'))
@@ -643,16 +787,22 @@ def run_linear(prepared: dict, config, *, inner_scope: str = 'common', folds: li
     check_input_sets(sets, prepared)
     val_keys, offsets = validation_keys(data, folds)
     stage1, timings, index_cols = [], [], {}
-    if any('h1_index' in cols for cols in sets.values()):
+    specs = index_specs(prepared)
+    used = [n for n in specs if any(n in cols for cols in sets.values())]
+    if used:
         t_all = time.perf_counter()
+        years = index_years(data)
         for model, target, loss in settings:
-            t0 = time.perf_counter()
-            col = f'idx_{model}_{target}_{loss}'
-            data[col], table = build_h1_index(data, model=model, target=target, loss=loss, inner_scope=inner_scope, decay_of=decay_of)
-            index_cols[(model, target, loss)] = col
-            stage1.append(table)
-            timings.append({'part': 'stage1', 'fold': None, 'model': model, 'target': target, 'loss': loss,
-                            'seconds': time.perf_counter() - t0})
+            for name in used:
+                t0 = time.perf_counter()
+                col = index_column(name, (model, target, loss))
+                data[col], table = build_index(data, name, specs[name], model=model, target=target, loss=loss,
+                                               inner_scope=inner_scope, decay_of=decay_of, years=years)
+                index_cols.setdefault((model, target, loss), {})[name] = col
+                stage1.append(table)
+                timing = {'part': 'stage1', 'fold': None, 'model': model, 'target': target, 'loss': loss,
+                          'seconds': time.perf_counter() - t0}
+                timings.append(timing if name == 'h1_index' else {**timing, 'index': name})
         log(f'지수형 ① 완료: {len(settings)}개 설정, {time.perf_counter() - t_all:.1f}초')
     payload = {'data': data, 'labels': labels, 'decay_of': decay_of, 'settings': settings, 'sets': sets,
                'index_cols': index_cols, 'inner_scope': inner_scope}
@@ -825,7 +975,7 @@ def _curve_record(tag: dict, fitted: dict, *, part: str, fold=None, index_year=N
             'inner': fitted['inner_curve'].astype(np.float32), 'train': fitted['train_curve'].astype(np.float32)}
 
 
-def select_and_fit_boosting(ctx: FoldContext, setting, *, input_cols, sigma_labels, decay_of, index_col=None,
+def select_and_fit_boosting(ctx: FoldContext, setting, *, input_cols, sigma_labels, decay_of, index_cols=None,
                             device='cpu', n_threads=None, verbose_every=None, say=None, prefix='', custom=False, overrides=None):
     """한 Fold·한 부스팅 설정. σ가 있으면 H3 λ 후보마다 1000트리를 학습하고, (λ × 트리 수) 중 내부 검증 IC 최고 한 쌍을 고른다.
     모든 학습이 같은 학습 행(ctx.fit_rows)을 쓰고 내부 검증은 원수익률로 평가한다. Huber② σ는 같은 행·입력·목표값의
@@ -836,7 +986,7 @@ def select_and_fit_boosting(ctx: FoldContext, setting, *, input_cols, sigma_labe
     m_inner = ctx.data.target_month.to_numpy()[ctx.inner_rows]
     fits, table = [], []
     for lab in labels:
-        cols = _columns(input_cols, lab, index_col)
+        cols = _columns(input_cols, lab, index_cols)
         sig = None
         if loss == 'huber_q999':
             delta = ctx.q999(target)
@@ -872,35 +1022,54 @@ def select_and_fit_boosting(ctx: FoldContext, setting, *, input_cols, sigma_labe
              'n_train': ctx.n_train, 'train_rows_sha256': ctx.rows_sha256}, table, fits)
 
 
-def build_h1_index_boosting(data, setting, *, inner_scope, decay_of, device='cpu', n_threads=None, log=None,
-                            years=range(TRAIN_START, 2022), custom=False, overrides=None):
-    """지수형 ①(부스팅). build_h1_index와 같은 행·연도 규칙에 ②와 같은 종류·목표값·손실·깊이·학습률, 트리 수는 Y−1 내부 검증.
-    반환: (순위 지수 배열, 선택 표, 곡선 목록)."""
-    raw_index = np.full(len(data), np.nan)
-    year = data.year.to_numpy()
-    train = data.train.to_numpy(bool)
-    scope = data.predict.to_numpy(bool) if inner_scope == 'full' else train
-    h1 = data.h1_available.to_numpy(bool)
+def build_index_boosting(data, name: str, spec: dict, setting, *, inner_scope, decay_of, device='cpu', n_threads=None, log=None,
+                         years=None, custom=False, overrides=None):
+    """지수형 ① 일반형(부스팅). build_index와 같은 행·연도·변환 규칙에 ②와 같은 종류·목표값·손실·깊이·학습률, 트리 수는 Y−1
+    내부 검증. centered_raw의 중심값 = 고른 트리 수로 입력 0을 예측한 값. 반환: (지수 배열, 선택 표, 곡선 목록)."""
+    d = _index_frame(data, name)
+    parts = list(spec['parts'])
+    years = index_years(data) if years is None else years
+    raw_index = np.full(len(d), np.nan)
+    year = d.year.to_numpy()
+    train = d.train.to_numpy(bool)
+    scope = d.predict.to_numpy(bool) if inner_scope == 'full' else train
+    member = _index_member(d, name, parts)
     tag = _boost_tag(setting, overrides=overrides)
+    ctag = tag if name == 'h1_index' else {**tag, 'index': name}
+    label = '①' if name == 'h1_index' else f'① {name}'
     rows, curves = [], []
     for Y in years:
-        target_rows = h1 & (year == Y)
-        ctx = FoldContext(data, train & (year >= INDEX_TRAIN_START) & (year <= Y - 2), scope & (year == Y - 1), target_rows)
-        chosen, _, fits = select_and_fit_boosting(ctx, setting, input_cols=list(H1_PARTS), sigma_labels=None, decay_of=decay_of,
-                                                  device=device, n_threads=n_threads, say=log, prefix=f'[① {Y}] ',
+        target_rows = member & (year == Y)
+        ctx = FoldContext(d, train & (year >= INDEX_TRAIN_START) & (year <= Y - 2), scope & (year == Y - 1), target_rows)
+        chosen, _, fits = select_and_fit_boosting(ctx, setting, input_cols=parts, sigma_labels=None, decay_of=decay_of,
+                                                  device=device, n_threads=n_threads, say=log, prefix=f'[{label} {Y}] ',
                                                   custom=custom, overrides=overrides)
         f = chosen['fitted']
-        raw_index[target_rows] = boosting.predict_boosting(f, _design(data, chosen['columns'], target_rows, fill=False), chosen['trees'])
-        gain = boosting.feature_gain(f, len(H1_PARTS), chosen['trees'])
+        pred = boosting.predict_boosting(f, _design(d, chosen['columns'], target_rows, fill=False), chosen['trees'])
+        center = 0.0
+        if spec['transform'] == 'centered_raw':
+            center = float(boosting.predict_boosting(f, np.zeros((1, len(parts))), chosen['trees'])[0])
+            pred = pred - center
+        raw_index[target_rows] = pred
+        gain = boosting.feature_gain(f, len(parts), chosen['trees'])
         share = gain / gain.sum() if gain.sum() > 0 else gain
-        rows.append({'index_year': Y, **tag, 'stage1_train_years': f'{INDEX_TRAIN_START}~{Y-2}', 'stage1_inner_valid_year': Y - 1,
-                     'trees': chosen['trees'], 'inner_ic': chosen['inner_ic'], 'ties': chosen['ties'], 'n_train': chosen['n_train'],
-                     'delta': np.nan if f['delta'] is None else f['delta'], 'huber_sigma': chosen['huber_sigma'],
-                     **{'gain_' + p: s for p, s in zip(H1_PARTS, share)}})
-        curves += [_curve_record(tag, x['fitted'], part='stage1', index_year=Y) for x in fits]
-    member = np.isfinite(raw_index)
-    ranked = rank_pm1(pd.Series(raw_index), member, data.base_month.reset_index(drop=True))
-    return ranked, pd.DataFrame(rows), curves
+        row = {'index_year': Y, **tag, 'stage1_train_years': f'{INDEX_TRAIN_START}~{Y-2}', 'stage1_inner_valid_year': Y - 1,
+               'trees': chosen['trees'], 'inner_ic': chosen['inner_ic'], 'ties': chosen['ties'], 'n_train': chosen['n_train'],
+               'delta': np.nan if f['delta'] is None else f['delta'], 'huber_sigma': chosen['huber_sigma'],
+               **{'gain_' + p: s for p, s in zip(parts, share)}}
+        if name != 'h1_index':
+            row.update(index=name, center=center)
+        rows.append(row)
+        curves += [_curve_record(ctag, x['fitted'], part='stage1', index_year=Y) for x in fits]
+    return _finish_index(raw_index, d, spec['transform']), pd.DataFrame(rows), curves
+
+
+def build_h1_index_boosting(data, setting, *, inner_scope, decay_of, device='cpu', n_threads=None, log=None,
+                            years=range(TRAIN_START, 2022), custom=False, overrides=None):
+    """지수형 ① H1 지수(부스팅). 반환: (순위 지수 배열, 선택 표, 곡선 목록)."""
+    return build_index_boosting(data, 'h1_index', {'parts': list(H1_PARTS), 'transform': 'rank'}, setting, inner_scope=inner_scope,
+                                decay_of=decay_of, device=device, n_threads=n_threads, log=log, years=years, custom=custom,
+                                overrides=overrides)
 
 
 def _run_fold_boosting(fold: dict) -> dict:
@@ -926,7 +1095,7 @@ def _run_fold_boosting(fold: dict) -> dict:
             prefix = f"[Fold {fold['fold']:>2}] {setting[0]} {setting[1]} {setting[2]} {tag['hparams']} {set_name}"
             chosen, table, fits = select_and_fit_boosting(
                 ctx, setting, input_cols=cols, sigma_labels=p['labels'], decay_of=p['decay_of'],
-                index_col=p['index_cols'].get(setting), device=p['device'], n_threads=p['n_threads'],
+                index_cols=p['index_cols'].get(setting), device=p['device'], n_threads=p['n_threads'],
                 say=_progress, prefix=prefix, custom=p.get('custom', False), overrides=p.get('overrides'))
             f, trees = chosen['fitted'], chosen['trees']
             preds[config_id(tag)] = boosting.predict_boosting(f, ctx.X(chosen['columns'], 'out'), trees)
@@ -984,9 +1153,10 @@ def _followup_suffix(kind: str) -> str:
 
 def run_boosting_stage1(prepared: dict, config, kind: str, *, settings=None, inner_scope: str = 'common', device: str | None = None,
                         n_threads: int | None = None, followup: bool = False, custom: bool = False, overrides: dict | None = None,
-                        log=print) -> dict:
-    """지수형 ①: 설정마다 2003~2021년 H1 지수(순위 [−1, 1])를 만든다. 결과는 같은 세션 메모리로 run_boosting(phase='index')에
-    넘긴다(파일로 저장했다가 다시 읽지 않음). 반환: kind, settings, inner_scope, n_rows, index(설정별 배열), stage1 표, curves, timings."""
+                        indexes=None, log=print) -> dict:
+    """지수형 ①: 설정마다 ② 학습 첫해~2021년 지수를 만든다(H1 지수 = 순위 [−1, 1], 붙인 지수는 그 규칙). indexes = 만들 지수 이름
+    목록(기본: 쓸 수 있는 모든 지수 — 특징을 안 붙였으면 H1만). 결과는 같은 세션 메모리로 run_boosting(phase='index')에 넘긴다
+    (파일로 저장했다가 다시 읽지 않음). 반환: kind, settings, inner_scope, n_rows, index({설정: {지수: 배열}}), stage1 표, curves, timings."""
     if inner_scope not in INNER_SCOPES:
         raise ValueError('inner_scope_unknown')
     check_grid(config)
@@ -994,20 +1164,29 @@ def run_boosting_stage1(prepared: dict, config, kind: str, *, settings=None, inn
     settings = _kind_settings(kind, settings, followup, custom)
     device = device or boosting.default_device(kind)
     decay_of = _decay_of(prepared)
+    specs = index_specs(prepared)
+    names = list(specs) if indexes is None else list(indexes)
+    if not names or not set(names) <= set(specs):
+        raise ValueError('stage1_index_unknown')
+    years = index_years(data)
     index, tables, curves, timings = {}, [], [], []
     for setting in settings:
-        t0 = time.perf_counter()
-        index[setting], table, c = build_h1_index_boosting(data, setting, inner_scope=inner_scope, decay_of=decay_of,
-                                                           device=device, n_threads=n_threads, custom=custom, overrides=overrides)
-        tables.append(table)
-        curves += c
-        seconds = time.perf_counter() - t0
-        timings.append({'part': 'stage1', 'fold': None, 'model': kind, 'target': setting[1], 'loss': setting[2],
-                        'hparams': boosting.hparam_tag(*setting[3:], overrides), 'seconds': seconds})
-        log(f"지수형 ① {setting[1]} {setting[2]} {boosting.hparam_tag(*setting[3:], overrides)}: {seconds:.0f}초, "
-            f"고른 트리 {table.trees.min()}~{table.trees.max()}")
+        index[setting] = {}
+        for name in names:
+            t0 = time.perf_counter()
+            index[setting][name], table, c = build_index_boosting(data, name, specs[name], setting, inner_scope=inner_scope,
+                                                                  decay_of=decay_of, device=device, n_threads=n_threads,
+                                                                  years=years, custom=custom, overrides=overrides)
+            tables.append(table)
+            curves += c
+            seconds = time.perf_counter() - t0
+            timing = {'part': 'stage1', 'fold': None, 'model': kind, 'target': setting[1], 'loss': setting[2],
+                      'hparams': boosting.hparam_tag(*setting[3:], overrides), 'seconds': seconds}
+            timings.append(timing if name == 'h1_index' else {**timing, 'index': name})
+            log(f"지수형 ①{'' if name == 'h1_index' else ' ' + name} {setting[1]} {setting[2]} "
+                f"{boosting.hparam_tag(*setting[3:], overrides)}: {seconds:.0f}초, 고른 트리 {table.trees.min()}~{table.trees.max()}")
     return {'kind': kind, 'settings': settings, 'inner_scope': inner_scope, 'device': device, 'followup': followup,
-            'custom': custom, 'overrides': dict(overrides or {}),
+            'custom': custom, 'overrides': dict(overrides or {}), 'indexes': names,
             'n_rows': len(data), 'index': index,
             'stage1': _concat(tables), 'curves': curves, 'timings': timings}
 
@@ -1036,23 +1215,28 @@ def run_boosting(prepared: dict, config, kind: str, *, phase: str, stage1: dict 
     allowed = BOOSTING_PHASES[phase]
     sets = {k: v for k, v in boosting_input_sets().items() if k in allowed} if sets is None else sets
     check_input_sets(sets, prepared)
-    extra = set(prepared.get('extra_features', {}))
-    for name, cols in sets.items():          # 기본 조합은 단계에 맞아야 하고, 새 특징 조합은 개별형 단계에서만(지수형은 H1로만 만듦)
+    specs = index_specs(prepared)
+    extra = set(prepared.get('extra_features', {})) | (set(specs) - {'h1_index'})
+    for name, cols in sets.items():          # 기본 조합은 단계에 맞아야 하고, 새 조합은 팀 실험(custom·붙인 특징·붙인 지수)만
         if name in allowed:
             continue
-        if not (custom or extra & set(cols)) or 'h1_index' in cols or phase != 'individual':
+        uses_index = any(c in specs for c in cols)
+        if not (custom or extra & set(cols)) or uses_index != (phase == 'index'):
             raise ValueError('boosting_input_set_not_in_phase')
     val_keys, offsets = validation_keys(data, folds)
     index_cols, stage1_rows, curves, timings = {}, pd.DataFrame(), [], []
-    if any('h1_index' in cols for cols in sets.values()):
+    used = [n for n in specs if any(n in cols for cols in sets.values())]
+    if used:
         if (stage1 is None or stage1['kind'] != kind or stage1['inner_scope'] != inner_scope or stage1['device'] != device
                 or stage1['n_rows'] != len(data) or stage1.get('followup', False) != followup
-                or stage1.get('overrides', {}) != dict(overrides or {}) or not set(settings) <= set(stage1['settings'])):
+                or stage1.get('overrides', {}) != dict(overrides or {}) or not set(settings) <= set(stage1['settings'])
+                or not set(used) <= set(stage1.get('indexes', ['h1_index']))):
             raise ValueError('stage1_result_required_for_same_kind_scope_device_settings')
         for setting in settings:
-            col = 'idx_' + '_'.join(map(str, setting))
-            data[col] = stage1['index'][setting]
-            index_cols[setting] = col
+            for name in used:
+                col = index_column(name, setting)
+                data[col] = stage1['index'][setting][name]
+                index_cols.setdefault(setting, {})[name] = col
         hp = {boosting.hparam_tag(*s[3:], overrides) + '|' + s[1] + '|' + s[2] for s in settings}
         mine = lambda r: f"{r['hparams']}|{r['target']}|{r['loss']}" in hp
         st = stage1['stage1']
@@ -1102,7 +1286,7 @@ def expected_boosting_ids(kind: str, sets=BOOSTING_SETS, followup: bool = False)
 def _team_run(result: dict, prepared: dict) -> bool:
     """팀 실험인가: custom=True로 돌렸거나 붙인 특징을 입력에 썼다. 그때만 '실제로 돌린 범위'를 완전한 실행으로 본다
     (기본 실행을 셀 단위로 일부만 저장하는 실수는 계속 막는다)."""
-    extra = set(prepared.get('extra_features', {}))
+    extra = set(prepared.get('extra_features', {})) | set(prepared.get('indexes', {}))
     return bool(result.get('custom')) or any(extra & set(cols) for cols in result.get('sets', {}).values())
 
 
@@ -1310,7 +1494,8 @@ def part_summary(result: dict) -> pd.DataFrame:
     train = result['selections'].groupby(['input_set', 'target']).train_ic.mean()
     out = pd.DataFrame({'valid_ic_full': valid['full'], 'valid_ic_common': valid['common'], 'train_ic': train})
     out['train_minus_valid'] = out.train_ic - out.valid_ic_full
-    order = list(input_sets())
+    order = list(result.get('sets') or input_sets())
+    order += [s for s in out.index.get_level_values('input_set').unique() if s not in order]
     return (out.reset_index().assign(_o=lambda f: f.input_set.map(order.index))
             .sort_values(['_o', 'target']).drop(columns='_o').reset_index(drop=True))
 
@@ -1484,6 +1669,8 @@ def finalize_run(root: Path, config, prepared: dict, result: dict, *, family: st
                                        .to_dict('records'),
               'author': author, 'experiment': experiment, 'description': description, 'changes': changes or {},
               'extra_features': prepared.get('extra_features', {}),
+              **({'indexes': prepared['indexes']} if prepared.get('indexes') else {}),
+              **({'train_start_target_year': prepared['train_start_year']} if 'train_start_year' in prepared else {}),
               'input_sets': {k: list(v) for k, v in result.get('sets', {}).items()},
               **(extra_record or {}),
               'outputs_sha256': {p.name: sha256(p) for p in sorted(folder.iterdir())}}

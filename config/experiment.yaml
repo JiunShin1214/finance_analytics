@@ -30,6 +30,10 @@ PATHS:
   mom: data/processed/mom.parquet
   h1: data/processed/h1.parquet
   h3: data/processed/h3.parquet
+  h2_debt_csv: data/raw/h2/h2_debt_lag_6m_fiscal_screened_2001_2021.csv   # 팀원(src/h2/) 산출 CSV를 원본으로 취급 [2026-11-15]
+  h2_monthly_csv: data/raw/h2/monthly.csv                                  # 팀원 월별 정책 점수(final_rule_v2_sensitivity)
+  h2_source_dir: data/raw/h2/source/                                       # 재현용 원천(한국은행 문서 정리본·부채비율.xlsx), 계산에 안 씀
+  h2: data/processed/h2.parquet                                            # src/features/h2.py 산출(debt·policy·policy_x_debt)
   features: data/processed/features.parquet
   samples: data/processed/samples.parquet
   predictions: outputs/validation/predictions.csv
@@ -120,20 +124,27 @@ H3:
   raw_feature: sqrt(v)
 # 확장 사용 여부와 함수에 전달할 명세. null인 명세는 확정 후 설정한다.
 H2:
-  enabled: false
-  lexicon: null
-  context_rules: null
-  publication_date_rule:
-    preferred: actual_release_date
-    fallback: meeting_date_proxy
-    fallback_flag_required: true
-    unknown_time_on_month_end: next_base_month
-  sensitivity_spec:
-    source: panel_market_cap
-    transform: natural_log
-    standardize: monthly_zscore
-    ddof: 1
-    direction: smaller_is_higher
+  enabled: false   # 기준 파이프라인(src/pipeline.py) 확장 스위치. model_test 편입은 아래 정의·model_test를 따른다.
+  # 2026-11-15 결정: H2 = 팀원 구현(src/h2/, 수정하지 않음) 그대로. 팀원 CSV(PATHS.h2_*)를 data/ 입력으로 쓰고 src/features/h2.py가
+  # data/processed/h2.parquet를 만든다. 예전 설계(발표문 사전·시가총액 민감도)는 대체됨.
+  definition:
+    debt: proxy_masked(DataGuide 연간 부채비율, 결산+6개월 공개 가정, 12월 결산만) → 기준월마다 적격 종목 안 1%/99% 윈저 → z(ddof=0)  # src/h2/features/transforms.monthly_standardize
+    policy: final_rule_v2_sensitivity   # 한국은행 통화정책방향 문장 규칙 점수(완화 +1 ~ 긴축 −1), 월 공통, 발표일 < 기준월 말일
+    policy_x_debt: policy × debt
+    standardize_rows: eligible_panel_rows_per_base_month   # 팀원 training_frame과 같은 집합(목표값 유무로 고르지 않음)
+    base_months: ['2001-01', '2021-11']                    # 기준월 2021-12(목표월 2022-01)는 테스트 기간이라 버림
+  model_test:
+    features: [debt, policy_x_debt]   # 개별형 입력에 붙이는 열(policy 단독은 월 공통이라 한 달 안 순위를 못 가름)
+    input_transform_exception: none   # 순위 변환 예외: 두 열은 매달 순위 [−1, 1]로 바꾸지 않고 z 그대로(순위로 바꾸면 정책 세기가 사라짐)
+    missing_feature_fill: 0           # 예측 때 빈 값은 0(z 평균과 같은 뜻). 학습은 관측 행만(교수님 지침)
+    train_start_target_year: 2004     # 2026-11-15 결정: 부채는 목표월 2002-07부터라 2003년 H2 지수를 ① 규칙으로 못 만듦 → H2 실험의 ② 학습(모든 조합)은 2004년부터. Fold 계획은 그대로(Fold 1은 2004년만)
+    stage1_rows: {h1_index: base_training_rows, h2_index: rows_with_h2_observed_all_years}   # 2026-11-15 결정: H1 지수 ①은 기존 실험과 같은 행 → 같은 지수
+    index_parts: [debt, policy_x_debt]   # 지수형 H2 지수: 우리 ①단계 규칙(해마다 Y−2까지 학습, Y−1로 고름)
+    index_transform: centered_raw     # 2026-11-15 결정: H2 지수는 순위로 바꾸지 않음. ① 예측 − ①(모든 입력 0) 예측(선형은 절편) → 빈 행 = 0
+    input_sets:
+      individual: [size, bm, mom, sigma, debt, policy_x_debt]
+      index: [h1_index, sigma, h2_index]
+      comparison: [[size, bm, mom, sigma], [h1_index, sigma]]   # 같은 학습 행(H2까지 관측된 행)으로 함께 실행
 H4:
   enabled: false
   search_spec: null

@@ -81,3 +81,6 @@ credentials/
 Thumbs.db
 desktop.ini
 ~$*
+
+# 팀원 H2 코드(src/h2/)가 쓰는 결과 폴더(공유 안 함, 2026-11-15)
+/results/
