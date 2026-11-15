@@ -146,8 +146,21 @@ def fit_linear(X, y, *, model: str, loss: str, ridge_lambda: float | None = None
 
     Huber 손실은 delta를 호출부가 준다(①은 huber_delta_q999, ②는 huber_sigma_sklearn(...)['delta']).
     start=(절편, 계수)를 주면 Huber 반복을 그 점에서 시작한다(속도용, 볼록 문제라 같은 최적점). 없으면 같은 λ의 MSE 해에서 시작.
+
+    학습 행에서 값이 전부 0인 열은 빼고 맞춘 뒤 계수 0을 넣는다(2026-11-15 결정: 정보가 없어 어떤 계수든 예측이 같고, OLS·MSE의
+    최소 노름 해와 같은 뜻. Huber 뉴턴법은 그 열 때문에 행렬을 뒤집지 못함). 예: H2 지수 ① 2004년의 policy×debt(2002년 7~12월
+    정책 점수가 매달 0). 순위 입력(H1·H3)에는 이런 열이 없어 기존 결과와 무관하다.
     """
     X, y = _arrays(X, y)
+    zero = np.all(X == 0, axis=0)
+    if zero.any():
+        keep = ~zero
+        if start is not None:
+            start = (start[0], np.asarray(start[1], float)[keep])
+        fitted = fit_linear(X[:, keep], y, model=model, loss=loss, ridge_lambda=ridge_lambda, delta=delta, start=start)
+        coef = np.zeros(X.shape[1])
+        coef[keep] = fitted['coef']
+        return {**fitted, 'coef': coef, 'zero_columns': [int(i) for i in np.flatnonzero(zero)]}
     if model not in LINEAR_MODELS or loss not in LOSSES:
         raise ValueError('linear_model_or_loss_unknown')
     if model == 'ols':

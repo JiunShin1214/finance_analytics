@@ -918,6 +918,12 @@ def merge_results(parts: list[dict]) -> dict:
         out['curves'] = [c for p in parts for c in p.get('curves', [])]
     if any('params' in p for p in parts):
         out['params'] = {k: v for p in parts for k, v in p.get('params', {}).items()}
+    if all('sets' in p for p in parts):             # 입력 조합·설정도 넘긴다(팀 실험이면 저장 때 '실제로 돌린 범위'를 이것으로 판단)
+        sets = [p['sets'] for p in parts]
+        if any(s != sets[0] for s in sets):
+            raise ValueError('parts_differ_in_input_sets')
+        out['sets'] = dict(sets[0])
+        out['settings'] = [s for p in parts for s in p.get('settings', [])]
     for key in ('kind', 'phase', 'device', 'followup'):     # 부스팅: 같은 종류·단계·장치·후속 여부끼리만 합친다
         values = {p.get(key) for p in parts}
         if len(values) > 1:
