@@ -289,6 +289,10 @@ MODEL_GRID:
   # --- 보고와 선택 ---
   report_metrics: [mean_ic, ic_sd, icir, ic_positive_share, r2_pct]   # 학습·바깥 검증과 그 차이, R²는 수익률 단위 예측만 [GKX 식 19]
   report_periods: [[2006, 2010], [2011, 2021], [2018, 2021]]
+  # 바깥 검증에서 한 달 예측이 모두 같으면(constant_score) IC = 0으로 센다 [결정 2026-11-15 A, 관례적 선택].
+  # 근거(논리): 순위를 구분하지 못한 달을 빼면 평균이 부풀고 모델마다 평가 달 수가 달라짐. 발생: XGB 회귀·표준화·Huber②·
+  # 깊이 1·[H1 지수]의 2021-01~07(트리 1개, 분할 기준이 지수 끝값). 해당 달은 run.json constant_score_months에 기록
+
   test_list: best_per_model_family_full_inputs   # 모델 종류별 바깥 검증 IC 1등 설정(입력 H1+H3 기준)
   primary_model: best_validation_mean_ic         # 11주차 0.005·ICIR 규칙 대체
 EVALUATION:

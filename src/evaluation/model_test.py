@@ -984,13 +984,16 @@ def expected_boosting_ids(kind: str, sets=BOOSTING_SETS, followup: bool = False)
 
 
 def finalize_boosting(root: Path, config, prepared: dict, result: dict, *, started: datetime, out_root: Path | None = None,
-                      require_complete: bool = True, gpu_name: str | None = None, log=print) -> dict:
+                      require_complete: bool = True, gpu_name: str | None = None, computed_commit: str | None = None,
+                      log=print) -> dict:
     """부스팅 한 종류·한 단계의 마무리: 종료 조건 → 표·예측·곡선(parquet) 저장. 폴더 <시각>_<종류>_<단계>(후속 튜닝은 끝에 _d4).
     지수형 단계는 ① 표·곡선도 함께 저장한다. 선형 Huber② σ 계산 코드도 해시에 포함."""
     kind, phase = result['kind'], result['phase']
     followup = result.get('followup', False)
     stage1 = result['stage1']
     suffix = f'{kind}_{phase}' + (_followup_suffix(kind) if followup else '')
+    if computed_commit:                    # 계산한 세션의 결과를 다른 커밋 코드로 저장만 다시 할 때(폴더 끝 _resaved)
+        suffix += '_resaved'
     return finalize_run(root, config, prepared, result, family='boosting', folder_suffix=suffix,
                         expected_ids=expected_boosting_ids(kind, BOOSTING_PHASES[phase], followup),
                         code=LINEAR_CODE[:1] + ['src/models/boosting.py'] + LINEAR_CODE[1:],
@@ -999,7 +1002,7 @@ def finalize_boosting(root: Path, config, prepared: dict, result: dict, *, start
                         started=started, out_root=out_root, require_complete=require_complete,
                         extra_versions=boosting.library_versions(),
                         extra_tables={'curves': (curves_frame(result['curves']), 'parquet')},
-                        extra_record={'kind': kind, 'phase': phase, 'followup': followup, 'library_params_by_setting': result.get('params', {}),
+                        extra_record={'kind': kind, 'phase': phase, 'followup': followup, 'computed_commit': computed_commit, 'library_params_by_setting': result.get('params', {}),
                                       'stage1_rows': int(len(stage1))}, log=log)
 
 
@@ -1084,12 +1087,16 @@ def _scopes(val_keys: pd.DataFrame):
 
 
 def outer_monthly_ic(val_keys: pd.DataFrame, predictions: dict) -> pd.DataFrame:
-    """설정 × 범위(전체 종목·공통 표본) × 목표월 IC. 평가는 원수익률."""
+    """설정 × 범위(전체 종목·공통 표본) × 목표월 IC. 평가는 원수익률.
+    한 달 예측이 모두 같으면(reason constant_score) 순위를 전혀 구분하지 못한 것이므로 IC = 0으로 센다
+    (2026-11-15 결정 A: 그 달을 빼면 실패한 달이 평균에서 사라져 부풀려지고 모델마다 평가 달이 달라짐. 관례적 선택).
+    내부 검증 IC(선택)에는 적용하지 않는다."""
     rows = []
     months, y = val_keys.target_month.to_numpy(), val_keys.y.to_numpy(float)
     for cid, yhat in predictions.items():
         for scope, mask in _scopes(val_keys):
             t = monthly_ic(months[mask], yhat[mask], y[mask]).reset_index()
+            t.loc[t.reason.eq('constant_score'), 'ic'] = 0.0
             rows.append(t.assign(config=cid, scope=scope))
     ic = pd.concat(rows, ignore_index=True)
     parts = pd.DataFrame([split_config_id(c) for c in ic.config], index=ic.index)
@@ -1099,7 +1106,8 @@ def outer_monthly_ic(val_keys: pd.DataFrame, predictions: dict) -> pd.DataFrame:
 def scipy_crosscheck(val_keys: pd.DataFrame, predictions: dict, ic: pd.DataFrame) -> float:
     """scipy.stats.spearmanr로 모든 (설정, 범위, 월) IC를 독립 재계산한 최대 절대 차이."""
     from scipy.stats import spearmanr
-    ref = ic.set_index(['config', 'scope', 'target_month']).ic
+    keyed = ic.set_index(['config', 'scope', 'target_month'])
+    ref, why = keyed.ic, keyed.reason
     y = val_keys.y.to_numpy(float)
     groups = {scope: pd.Series(np.flatnonzero(mask)).groupby(val_keys.target_month.to_numpy()[mask]).apply(np.asarray)
               for scope, mask in _scopes(val_keys)}
@@ -1112,6 +1120,8 @@ def scipy_crosscheck(val_keys: pd.DataFrame, predictions: dict, ic: pd.DataFrame
                     warnings.simplefilter('ignore')               # 상수 입력은 아래에서 결측끼리 비교
                     value = float(spearmanr(yhat[pos][ok], y[pos][ok]).statistic)
                 mine = float(ref.loc[(cid, scope, month)])
+                if np.isnan(value) and why.loc[(cid, scope, month)] == 'constant_score':
+                    value = 0.0                                    # 상수 예측은 IC 0으로 센다(outer_monthly_ic)
                 if np.isnan(value) and np.isnan(mine):
                     continue                                       # 둘 다 결측(상수 예측 등)이면 일치
                 if np.isnan(value) or np.isnan(mine):
@@ -1325,6 +1335,8 @@ def finalize_run(root: Path, config, prepared: dict, result: dict, *, family: st
                            'scikit-learn': sklearn.__version__, 'scipy': scipy.__version__, **(extra_versions or {})},
               'device': {'platform': platform.platform(), 'processor': platform.processor(), 'cpu_count': os.cpu_count(),
                          **device},
+              'constant_score_months': ic.loc[ic.reason.eq('constant_score'), ['config', 'scope', 'target_month']]
+                                       .to_dict('records'),
               **(extra_record or {}),
               'outputs_sha256': {p.name: sha256(p) for p in sorted(folder.iterdir())}}
     for name, value in prepared['inputs'].items():

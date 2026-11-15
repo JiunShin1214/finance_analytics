@@ -227,15 +227,21 @@ class BoostingRunTests(unittest.TestCase):
         self.assertEqual(mt.split_config_id(bid)['hparams'], 'd2_lr0.01')
         self.assertEqual(len(mt.expected_boosting_ids('xgb_reg')), 12 * 4)
 
-    def test_scipy_crosscheck_missing_ic(self):
+    def test_scipy_crosscheck_constant_month_counts_zero(self):
         vk = pd.DataFrame({'target_month': ['2010-01'] * 4 + ['2010-02'] * 4, 'y': [.1, .2, .3, .4, .4, .3, .2, .1],
                            'common': [True] * 8})
-        preds = {'c|boosting|m|t|l|s': np.array([1., 1., 1., 1., 1., 2., 3., 4.])}   # 1월은 상수 예측 → IC 결측
-        ic = mt.outer_monthly_ic(vk.rename(columns={'c': 'c'}), {'boosting|m|t|l|s': preds['c|boosting|m|t|l|s']})
-        self.assertEqual(mt.scipy_crosscheck(vk, {'boosting|m|t|l|s': preds['c|boosting|m|t|l|s']}, ic), 0.0)
+        preds = {'boosting|m|t|l|s': np.array([1., 1., 1., 1., 1., 2., 3., 4.])}   # 1월은 상수 예측 → IC 0(결정 A)
+        ic = mt.outer_monthly_ic(vk, preds)
+        jan = ic[ic.target_month.eq('2010-01')]
+        self.assertTrue(jan.ic.eq(0.0).all() and jan.reason.eq('constant_score').all())
+        self.assertTrue(ic.ic.notna().all())
+        self.assertEqual(mt.scipy_crosscheck(vk, preds, ic), 0.0)
         bad = ic.copy()
-        bad.loc[bad.target_month.eq('2010-01'), 'ic'] = 0.5                         # 한쪽만 결측이면 불일치
-        self.assertEqual(mt.scipy_crosscheck(vk, {'boosting|m|t|l|s': preds['c|boosting|m|t|l|s']}, bad), float('inf'))
+        bad.loc[bad.target_month.eq('2010-01'), 'ic'] = 0.5                         # 상수 달 값이 0이 아니면 불일치
+        self.assertEqual(mt.scipy_crosscheck(vk, preds, bad), 0.5)
+        bad = ic.copy()
+        bad.loc[bad.target_month.eq('2010-02'), 'ic'] = np.nan                      # 한쪽만 결측이면 불일치
+        self.assertEqual(mt.scipy_crosscheck(vk, preds, bad), float('inf'))
 
     def test_sigma_h3_comparison_tolerance(self):
         keys = pd.DataFrame({'stock_id': ['a', 'a', 'b'], 'base_month': ['2010-01', '2010-02', '2010-01']})
