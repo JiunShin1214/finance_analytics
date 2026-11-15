@@ -199,6 +199,7 @@ MLP 공통 설정은 ReLU, Adam, 학습률 `0.001`, 배치 `256`, 최대 반복 
 │   ├── models/              # OLS·Ridge·MLP와 공통 인터페이스
 │   └── evaluation/          # 확장창·Rank IC
 ├── tests/                   # 특징·모형·기간·스키마·IC 검증 골격
+├── notebook/                # model_test 실행 노트북(공용), notebook/<이름>/ = 각자 노트북
 ├── data/
 │   ├── raw/                 # 원본·외부 원문·공통 CSV
 │   ├── interim/             # 정리 패널·공개시점 결합자료
@@ -207,7 +208,8 @@ MLP 공통 설정은 ReLU, Adam, 학습률 `0.001`, 배치 `256`, 최대 반복 
 └── outputs/
     ├── validation/          # 내부 검증 예측·월별 IC
     ├── final_test/          # 최종평가 예측·월별 IC·요약표
-    └── run_id/              # 실행·검사·수정 이력
+    ├── model_results/       # model_test 결과(팀 공유): <이름>/<시각>_<실험>_<모델·단계>/result.zip만 Git
+    └── run_id/              # 실행·검사·수정 이력(개인, 공유 안 함)
 ```
 
 `src/models/`는 Python 모형 코드, 루트 `models/`는 학습 후 저장할 모형 객체와 입력 변환기를 위한 경로다.
@@ -314,3 +316,11 @@ python -m src.pipeline --stage h1-mean-tests --execute
 ```
 
 `h1-mean-tests`는 공통 특징에서 고정된 10개 지수와 월별 순위 상관을 계산해 검정한다. 이전 PCA·검정 실행 폴더가 필요하지 않다. 공시 선택만 확인하려면 `python -m src.preprocessing.dart_extract`를 사용한다. 자기자본 전체를 재생성하는 명령(`equity_dating`, `equity_asof`)은 DataGuide 원본 등 해당 원천 입력도 사용하며 별도로 실행한다.
+
+## 12. 팀 실험과 결과 공유 (2026-11-15)
+
+- 공유: 코드·노트북·결과는 Git, 입력 `data/`만 Drive(내려받아 저장소 `data/`에 그대로 둔다).
+- Git 충돌을 막는 규칙: 공용 파일(`src/`의 기존 모듈, `notebook/`의 공용 노트북, `config/experiment.yaml`, `requirements.txt`)은 관리자만 고친다. 각자는 `notebook/<이름>/`, `src/team/<이름>/`에 새 파일만 만든다.
+- 실행 결과는 `outputs/model_results/<이름>/<시각>_<실험>_<모델·단계>/`에 같은 규격으로 생기고(`<이름>`·`<실험>`은 영문·숫자·`_`·`-`), Git에는 실행마다 `result.zip`(run.json·표·곡선, 예측값 제외) 하나만 올라간다.
+- 결과를 비교하려면 공통 함수만 쓴다: `prepare_inputs`(새 특징은 `extra_features`), `plan_folds`·`fold_rows`, `validation_rows`, 저장은 `finalize_linear`·`finalize_boosting`·`save_result`. 예시는 `notebook/model_test_experiment_example.ipynb`.
+- XGBoost는 GPU(Colab). Colab 결과는 내 드라이브 `model_results/<이름>/`에 저장한 뒤 내려받아 로컬 `outputs/model_results/<이름>/`에 넣고 커밋한다.

@@ -240,10 +240,15 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(len(summary), len(SETS) * len({t for _, t, _ in SETTINGS}))
         self.assertTrue({'valid_ic_full', 'valid_ic_common', 'train_ic', 'train_minus_valid'} <= set(summary))
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(ValueError):
-                mt.finalize_linear(ROOT, CONFIG, self.prepared, part, started=datetime.now(), out_root=Path(tmp), log=lambda *_: None)
+            with self.assertRaises(ValueError):            # 일부 셀만으로는 완전한 실행이 아님
+                mt.finalize_linear(ROOT, CONFIG, self.prepared, part, started=datetime.now(), out_root=Path(tmp), log=lambda *_: None,
+                                   author='tester', experiment='base')
+            with self.assertRaises(ValueError):            # 작성자 없이는 저장하지 않음
+                mt.finalize_linear(ROOT, CONFIG, self.prepared, part, started=datetime.now(), out_root=Path(tmp),
+                                   require_complete=False, log=lambda *_: None)
             out = mt.finalize_linear(ROOT, CONFIG, self.prepared, part, started=datetime.now(), out_root=Path(tmp),
-                                     require_complete=False, log=lambda *_: None)
+                                     require_complete=False, log=lambda *_: None, author='tester', experiment='base')
+            self.assertEqual(Path(out['run_dir']).parent, Path(tmp) / 'tester')
             self.assertEqual(out['status'], 'PASSED')
             files = {p.name for p in Path(out['run_dir']).iterdir()}
             self.assertTrue({'run.json', 'performance_summary.csv', 'validation_predictions.parquet'} <= files)

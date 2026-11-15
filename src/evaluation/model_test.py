@@ -12,6 +12,11 @@
 4. run_linear: Fold × (모델·목표값·손실·입력 조합)마다 조정값(H3 λ × Ridge λ)을 내부 검증 평균 IC 최고 한 쌍으로 고르고
    (정확히 같으면 Ridge λ 큰 쪽 → H3 긴 기간 쪽), 내부 학습 모델 그대로 바깥 검증 연도를 예측.
 5. 보고 표와 종료 조건 검사. 하나라도 실패하면 결과를 쓰지 않는다.
+
+팀 실험(2026-11-15): 모델·노트북은 자유. 결과를 비교하려면 공통 규격만 지킨다 — 입력 준비(prepare_inputs, 새 특징은
+extra_features), Fold 계획(plan_folds·fold_rows), 채점 행(validation_rows), 저장(finalize_linear·finalize_boosting·save_result에
+author·experiment 필수). 결과는 outputs/model_results/<작성자>/<시각>_<실험>_<모델·단계>/에 같은 규격으로 생기고,
+그 폴더를 그대로 올려 공유한다. outputs/run_id는 개인 기록이다.
 """
 from __future__ import annotations
 
@@ -20,6 +25,7 @@ import hashlib
 import itertools
 import json
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -187,8 +193,64 @@ def compare_sigma_to_h3(grid: pd.DataFrame, h3: pd.DataFrame, *, atol: float) ->
             'sigma_decay097_max_abs_diff': max_diff, 'sigma_decay097_values_differ': int((diff > 0).sum())}
 
 
-def prepare_inputs(root: Path, config, *, h3_grid: pd.DataFrame | None = None) -> dict:
-    """공유 표 4개만 읽어 메모리 입력을 만든다. 반환 dict: data(종목×월 표), sigma_labels, checks, inputs(해시)."""
+RESERVED_FEATURES = set(COMPONENTS) | {'h1_index'}
+
+
+def load_extra_feature(root: Path, name: str, path) -> pd.DataFrame:
+    """팀원이 만든 특징 파일(data/ 아래 parquet) 읽기·검사. 열: stock_id, base_month(YYYY-MM), <name>(없으면 NaN).
+    종목 × 기준월 한 줄, 기준월 2000-12~2021-11만(그 뒤는 테스트 기간이라 거부). t월 말에 알 수 있던 값인지는 만든 사람 책임."""
+    if not name.isidentifier() or name in RESERVED_FEATURES or name.startswith(('x_', 't_', 'idx_')):
+        raise ValueError(f'feature_name_not_allowed:{name}')
+    rel = Path(path)
+    if rel.is_absolute() or not rel.as_posix().startswith('data/'):
+        raise PermissionError(f'feature_file_must_be_under_data:{rel.as_posix()}')
+    f = pd.read_parquet(root / rel)
+    need = {'stock_id', 'base_month', name}
+    if not need <= set(f.columns):
+        raise ValueError(f'feature_columns_missing:{name}:' + ','.join(sorted(need - set(f.columns))))
+    f = f[['stock_id', 'base_month', name]].copy()
+    f['stock_id'] = f.stock_id.astype(str)
+    f['base_month'] = f.base_month.astype(str)
+    if not f.base_month.str.fullmatch(r'\d{4}-\d{2}').all():
+        raise ValueError(f'feature_base_month_format:{name}')
+    if f.base_month.gt(BASE_LAST).any():
+        raise PermissionError(f'feature_has_test_period_months:{name}')
+    if f.duplicated(['stock_id', 'base_month']).any():
+        raise ValueError(f'feature_duplicate_keys:{name}')
+    f[name] = pd.to_numeric(f[name], errors='raise').astype(float)
+    if np.isinf(f[name]).any():
+        raise ValueError(f'feature_infinite_values:{name}')
+    return f[f.base_month.ge(BASE_FIRST)]
+
+
+def add_extra_features(data: pd.DataFrame, features: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """특징 표들을 붙인다: 매달 적격·관측 종목 안 순위 [−1, 1](x_<이름>). 학습 행은 새 특징까지 모두 관측된 행만
+    (2026-11-15 결정 A, 교수님 지침 "학습은 관측값만"), 예측 행은 그대로(빈 특징은 예측 때 0). 학습 행이 바뀌므로 목표값
+    변환(윈저·월별 표준화·10분위·백분위)을 새 학습 행 안에서 다시 만든다. 반환: (새 표, 연도별 관측 비율 표)."""
+    d = data.copy()
+    elig = d.eligible.eq(True).fillna(False).to_numpy(bool)
+    coverage = []
+    for name, f in features.items():
+        merged = d[['stock_id', 'base_month']].merge(f, on=['stock_id', 'base_month'], how='left', validate='one_to_one')
+        avail = merged[name].notna().to_numpy() & elig
+        d['x_' + name] = rank_pm1(merged[name], avail, d.base_month)
+        d[name + '_available'] = avail
+        before = d.train.to_numpy(bool)
+        d['train'] = before & avail
+        for y_, g in d.groupby('year'):
+            coverage.append({'feature': name, 'target_year': int(y_), 'predict_rows': int(g.predict.sum()),
+                             'available_share_of_predict': float((g.predict & g[name + '_available']).sum() / max(1, g.predict.sum())),
+                             'train_rows_before': int(before[g.index].sum()), 'train_rows_after': int(d.train[g.index].sum())})
+    for name, arr in monthly_target_transforms(d.y, d.train.to_numpy(), d.target_month).items():
+        d['t_' + name] = arr
+    return d, pd.DataFrame(coverage)
+
+
+def prepare_inputs(root: Path, config, *, h3_grid: pd.DataFrame | None = None, extra_features: dict | None = None) -> dict:
+    """공유 표 4개(+ 팀원 특징 파일)만 읽어 메모리 입력을 만든다. 반환 dict: data(종목×월 표), sigma_labels, checks, inputs(해시).
+
+    extra_features = {이름: 'data/processed/<파일>.parquet'}. 주면 학습 행이 새 특징까지 관측된 행으로 줄어든다(예측 행은 그대로).
+    """
     check_grid(config)
     verify_no_test_access(stage='validate', declared_target_years=list(range(2001, 2022)), source_scope_verified=True)
     paths = config['PATHS']
@@ -207,13 +269,44 @@ def prepare_inputs(root: Path, config, *, h3_grid: pd.DataFrame | None = None) -
     g = h3_grid.sort_values(['stock_id', 'base_month']).reset_index(drop=True)
     checks = compare_sigma_to_h3(g, h3, atol=float(config['REPRODUCIBILITY_PREDICTION_ATOL']))
     data = build_model_data(comp, g, panel[['stock_id', 'month', 'return']], labels, units=config['UNITS'])
+    coverage = pd.DataFrame()
+    if extra_features:
+        feats = {n: load_extra_feature(root, n, path) for n, path in extra_features.items()}
+        inputs.update({Path(path).as_posix(): sha256(root / path) for path in extra_features.values()})
+        data, coverage = add_extra_features(data, feats)
     val = data[data.predict & data.year.between(2006, 2021)]
     checks.update(validation_prediction_rows=int(len(val)), validation_prediction_rows_all_eligible=bool(val.eligible.eq(True).all()),
                   training_rows_2003_2021=int(data.train[data.year >= TRAIN_START].sum()),
                   training_rows_2001_2021=int(data.train.sum()))
     if len(val) != EXPECTED_VALIDATION_PREDICTION_ROWS or not checks['validation_prediction_rows_all_eligible']:
         raise ValueError('validation_prediction_rows_changed')
-    return {'data': data, 'sigma_labels': labels, 'lambda_candidates': cand, 'checks': checks, 'inputs': inputs}
+    return {'data': data, 'sigma_labels': labels, 'lambda_candidates': cand, 'checks': checks, 'inputs': inputs,
+            'extra_features': dict(extra_features or {}), 'feature_coverage': coverage}
+
+
+def feature_names(prepared: dict) -> list[str]:
+    """입력 조합에 쓸 수 있는 특징 이름: 기본 4개 + 붙인 특징."""
+    return list(COMPONENTS) + list(prepared.get('extra_features', {}))
+
+
+def make_input_set(columns) -> tuple[str, list[str]]:
+    """특징 목록 → (조합 이름, 목록). 예: ['size', 'bm', 'mom', 'sigma', 'h2'] → ('ind:size+bm+mom+sigma+h2', ...)."""
+    cols = list(columns)
+    if not cols or len(set(cols)) != len(cols):
+        raise ValueError('input_set_empty_or_duplicate')
+    if 'h1_index' in cols:
+        name = 'idx:' + '+'.join('h1' if c == 'h1_index' else c for c in cols)
+    else:
+        name = 'ind:' + '+'.join(cols)
+    return name, cols
+
+
+def check_input_sets(sets: dict, prepared: dict) -> None:
+    allowed = set(feature_names(prepared)) | {'h1_index'}
+    for name, cols in sets.items():
+        bad = [c for c in cols if c not in allowed]
+        if bad:
+            raise ValueError(f'input_set_unknown_feature:{name}:' + ','.join(bad))
 
 
 # ---------- 2) Fold ----------
@@ -547,6 +640,7 @@ def run_linear(prepared: dict, config, *, inner_scope: str = 'common', folds: li
     folds = plan_folds(grid) if folds is None else folds
     settings = linear_settings() if settings is None else list(settings)
     sets = input_sets() if sets is None else sets
+    check_input_sets(sets, prepared)
     val_keys, offsets = validation_keys(data, folds)
     stage1, timings, index_cols = [], [], {}
     if any('h1_index' in cols for cols in sets.values()):
@@ -563,7 +657,8 @@ def run_linear(prepared: dict, config, *, inner_scope: str = 'common', folds: li
     payload = {'data': data, 'labels': labels, 'decay_of': decay_of, 'settings': settings, 'sets': sets,
                'index_cols': index_cols, 'inner_scope': inner_scope}
     done = execute_folds(_run_fold, payload, folds, workers=workers, log=log)
-    return {**assemble_folds(done, folds, val_keys, offsets, timings), 'stage1': _concat(stage1), 'inner_scope': inner_scope}
+    return {**assemble_folds(done, folds, val_keys, offsets, timings), 'stage1': _concat(stage1), 'inner_scope': inner_scope,
+            'sets': dict(sets), 'settings': list(settings)}
 
 
 # ---------- 선형·부스팅 공통 실행 뼈대 ----------
@@ -699,9 +794,9 @@ def boosting_input_sets() -> dict:
     return {k: sets[k] for k in BOOSTING_SETS}
 
 
-def _boost_tag(setting, input_set: str | None = None) -> dict:
+def _boost_tag(setting, input_set: str | None = None, overrides=None) -> dict:
     kind, target, loss, depth, lr = setting
-    tag = {'family': 'boosting', 'model': kind, 'target': target, 'loss': loss, 'hparams': boosting.hparam_tag(depth, lr)}
+    tag = {'family': 'boosting', 'model': kind, 'target': target, 'loss': loss, 'hparams': boosting.hparam_tag(depth, lr, overrides)}
     if input_set is not None:
         tag['input_set'] = input_set
     return tag
@@ -731,7 +826,7 @@ def _curve_record(tag: dict, fitted: dict, *, part: str, fold=None, index_year=N
 
 
 def select_and_fit_boosting(ctx: FoldContext, setting, *, input_cols, sigma_labels, decay_of, index_col=None,
-                            device='cpu', n_threads=None, verbose_every=None, say=None, prefix=''):
+                            device='cpu', n_threads=None, verbose_every=None, say=None, prefix='', custom=False, overrides=None):
     """한 Fold·한 부스팅 설정. σ가 있으면 H3 λ 후보마다 1000트리를 학습하고, (λ × 트리 수) 중 내부 검증 IC 최고 한 쌍을 고른다.
     모든 학습이 같은 학습 행(ctx.fit_rows)을 쓰고 내부 검증은 원수익률로 평가한다. Huber② σ는 같은 행·입력·목표값의
     OLS HuberRegressor(ctx.sigma2, 선형과 같은 값). 반환: (선택 dict, 후보별 표, 학습 목록)."""
@@ -756,7 +851,8 @@ def select_and_fit_boosting(ctx: FoldContext, setting, *, input_cols, sigma_labe
                                       learning_rate=lr, delta=delta, inner_X=ctx.X(cols, 'inner'), inner_months=m_inner,
                                       inner_score=lambda p: ctx.scorer.score(p)[0],
                                       train_score=lambda p: ctx.train_scorer.score(p)[0],
-                                      device=device, n_threads=n_threads, verbose_every=verbose_every, log=say)
+                                      device=device, n_threads=n_threads, verbose_every=verbose_every, log=say,
+                                      custom=custom, overrides=overrides)
         except ValueError as error:
             table.append({'h3_label': lab, 'decay': decay, 'best_trees': np.nan, 'inner_ic': np.nan, 'inner_ic_tree1000': np.nan,
                           'failure': str(error), 'seconds': np.nan, 'huber_sigma': sig['sigma'] if sig else np.nan})
@@ -777,7 +873,7 @@ def select_and_fit_boosting(ctx: FoldContext, setting, *, input_cols, sigma_labe
 
 
 def build_h1_index_boosting(data, setting, *, inner_scope, decay_of, device='cpu', n_threads=None, log=None,
-                            years=range(TRAIN_START, 2022)):
+                            years=range(TRAIN_START, 2022), custom=False, overrides=None):
     """지수형 ①(부스팅). build_h1_index와 같은 행·연도 규칙에 ②와 같은 종류·목표값·손실·깊이·학습률, 트리 수는 Y−1 내부 검증.
     반환: (순위 지수 배열, 선택 표, 곡선 목록)."""
     raw_index = np.full(len(data), np.nan)
@@ -785,13 +881,14 @@ def build_h1_index_boosting(data, setting, *, inner_scope, decay_of, device='cpu
     train = data.train.to_numpy(bool)
     scope = data.predict.to_numpy(bool) if inner_scope == 'full' else train
     h1 = data.h1_available.to_numpy(bool)
-    tag = _boost_tag(setting)
+    tag = _boost_tag(setting, overrides=overrides)
     rows, curves = [], []
     for Y in years:
         target_rows = h1 & (year == Y)
         ctx = FoldContext(data, train & (year >= INDEX_TRAIN_START) & (year <= Y - 2), scope & (year == Y - 1), target_rows)
         chosen, _, fits = select_and_fit_boosting(ctx, setting, input_cols=list(H1_PARTS), sigma_labels=None, decay_of=decay_of,
-                                                  device=device, n_threads=n_threads, say=log, prefix=f'[① {Y}] ')
+                                                  device=device, n_threads=n_threads, say=log, prefix=f'[① {Y}] ',
+                                                  custom=custom, overrides=overrides)
         f = chosen['fitted']
         raw_index[target_rows] = boosting.predict_boosting(f, _design(data, chosen['columns'], target_rows, fill=False), chosen['trees'])
         gain = boosting.feature_gain(f, len(H1_PARTS), chosen['trees'])
@@ -825,12 +922,12 @@ def _run_fold_boosting(fold: dict) -> dict:
         for setting in p['settings']:
             i_job += 1
             t0 = time.perf_counter()
-            tag = {**_boost_tag(setting, set_name), 'fold': fold['fold']}
+            tag = {**_boost_tag(setting, set_name, p.get('overrides')), 'fold': fold['fold']}
             prefix = f"[Fold {fold['fold']:>2}] {setting[0]} {setting[1]} {setting[2]} {tag['hparams']} {set_name}"
             chosen, table, fits = select_and_fit_boosting(
                 ctx, setting, input_cols=cols, sigma_labels=p['labels'], decay_of=p['decay_of'],
                 index_col=p['index_cols'].get(setting), device=p['device'], n_threads=p['n_threads'],
-                say=_progress, prefix=prefix)
+                say=_progress, prefix=prefix, custom=p.get('custom', False), overrides=p.get('overrides'))
             f, trees = chosen['fitted'], chosen['trees']
             preds[config_id(tag)] = boosting.predict_boosting(f, ctx.X(chosen['columns'], 'out'), trees)
             train_ic = monthly_ic(ctx.m_fit, boosting.predict_boosting(f, ctx.X(chosen['columns'], 'fit'), trees), y_all[ctx.fit_rows])
@@ -859,9 +956,18 @@ def _run_fold_boosting(fold: dict) -> dict:
             'params': params, 'seconds': time.perf_counter() - t_fold}
 
 
-def _kind_settings(kind: str, settings, followup: bool = False) -> list[tuple]:
+def _kind_settings(kind: str, settings, followup: bool = False, custom: bool = False) -> list[tuple]:
     if kind not in boosting.KINDS:
         raise ValueError('boosting_kind_unknown')
+    if custom:                       # 팀 실험: 설정을 직접 적는다(종류·목표값·손실은 그 종류의 것, 깊이·학습률은 값 모양만 검사)
+        if not settings:
+            raise ValueError('custom_settings_required')
+        settings = [tuple(s) for s in settings]
+        for s_ in settings:
+            if s_[0] != kind:
+                raise ValueError('settings_kind_mismatch')
+            boosting._check_setting(*s_, 1.0 if s_[2].startswith('huber') else None, custom=True)
+        return settings
     allowed = boosting.settings(kind, followup=followup)
     if not allowed:
         raise ValueError('no_followup_settings_for_kind')
@@ -877,41 +983,45 @@ def _followup_suffix(kind: str) -> str:
 
 
 def run_boosting_stage1(prepared: dict, config, kind: str, *, settings=None, inner_scope: str = 'common', device: str | None = None,
-                        n_threads: int | None = None, followup: bool = False, log=print) -> dict:
+                        n_threads: int | None = None, followup: bool = False, custom: bool = False, overrides: dict | None = None,
+                        log=print) -> dict:
     """지수형 ①: 설정마다 2003~2021년 H1 지수(순위 [−1, 1])를 만든다. 결과는 같은 세션 메모리로 run_boosting(phase='index')에
     넘긴다(파일로 저장했다가 다시 읽지 않음). 반환: kind, settings, inner_scope, n_rows, index(설정별 배열), stage1 표, curves, timings."""
     if inner_scope not in INNER_SCOPES:
         raise ValueError('inner_scope_unknown')
     check_grid(config)
     data = prepared['data']
-    settings = _kind_settings(kind, settings, followup)
+    settings = _kind_settings(kind, settings, followup, custom)
     device = device or boosting.default_device(kind)
     decay_of = _decay_of(prepared)
     index, tables, curves, timings = {}, [], [], []
     for setting in settings:
         t0 = time.perf_counter()
         index[setting], table, c = build_h1_index_boosting(data, setting, inner_scope=inner_scope, decay_of=decay_of,
-                                                           device=device, n_threads=n_threads)
+                                                           device=device, n_threads=n_threads, custom=custom, overrides=overrides)
         tables.append(table)
         curves += c
         seconds = time.perf_counter() - t0
         timings.append({'part': 'stage1', 'fold': None, 'model': kind, 'target': setting[1], 'loss': setting[2],
-                        'hparams': boosting.hparam_tag(*setting[3:]), 'seconds': seconds})
-        log(f"지수형 ① {setting[1]} {setting[2]} {boosting.hparam_tag(*setting[3:])}: {seconds:.0f}초, "
+                        'hparams': boosting.hparam_tag(*setting[3:], overrides), 'seconds': seconds})
+        log(f"지수형 ① {setting[1]} {setting[2]} {boosting.hparam_tag(*setting[3:], overrides)}: {seconds:.0f}초, "
             f"고른 트리 {table.trees.min()}~{table.trees.max()}")
     return {'kind': kind, 'settings': settings, 'inner_scope': inner_scope, 'device': device, 'followup': followup,
+            'custom': custom, 'overrides': dict(overrides or {}),
             'n_rows': len(data), 'index': index,
             'stage1': _concat(tables), 'curves': curves, 'timings': timings}
 
 
 def run_boosting(prepared: dict, config, kind: str, *, phase: str, stage1: dict | None = None, settings=None,
                  sets: dict | None = None, folds: list[dict] | None = None, inner_scope: str = 'common', device: str | None = None,
-                 n_threads: int | None = None, workers: int = 1, followup: bool = False, log=print) -> dict:
+                 n_threads: int | None = None, workers: int = 1, followup: bool = False, custom: bool = False,
+                 overrides: dict | None = None, log=print) -> dict:
     """한 부스팅 종류·한 단계(전체 또는 일부 설정)를 실행한다. 반환 형식은 run_linear와 같고 curves·params가 더 있다.
 
     phase='individual': [Size, B/M, Mom, σ]. phase='index': [σ]·[H1 지수]·[H1 지수, σ], 같은 세션의 run_boosting_stage1 결과가
     필요하다(같은 종류·내부 검증 범위·자료, 설정 포함). followup=True면 후속 튜닝 설정(boosting.FOLLOWUP_DEPTHS)만 돌리고
-    따로 저장한다. workers>1이면 Fold를 프로세스로 나눈다(n_threads를 함께 줄일 것). 난수 없음.
+    따로 저장한다. custom=True면 settings에 승인 밖의 깊이·학습률도 적을 수 있고, overrides로 라이브러리 설정(규제·추출 비율 등)을
+    덮어쓴다(팀 실험). sets에는 붙인 특징을 포함한 개별형 조합도 줄 수 있다(make_input_set). workers>1이면 Fold를 프로세스로 나눈다(n_threads를 함께 줄일 것). 난수 없음.
     """
     if inner_scope not in INNER_SCOPES:
         raise ValueError('inner_scope_unknown')
@@ -921,37 +1031,43 @@ def run_boosting(prepared: dict, config, kind: str, *, phase: str, stage1: dict 
     data = prepared['data'].copy()
     decay_of = _decay_of(prepared)
     folds = plan_folds(grid) if folds is None else folds
-    settings = _kind_settings(kind, settings, followup)
+    settings = _kind_settings(kind, settings, followup, custom)
     device = device or boosting.default_device(kind)       # 기본은 config 장치. 다르게 주면 run.json에 표시
     allowed = BOOSTING_PHASES[phase]
     sets = {k: v for k, v in boosting_input_sets().items() if k in allowed} if sets is None else sets
-    if not sets or not set(sets) <= set(allowed):
-        raise ValueError('boosting_input_set_not_in_phase')
+    check_input_sets(sets, prepared)
+    extra = set(prepared.get('extra_features', {}))
+    for name, cols in sets.items():          # 기본 조합은 단계에 맞아야 하고, 새 특징 조합은 개별형 단계에서만(지수형은 H1로만 만듦)
+        if name in allowed:
+            continue
+        if not (custom or extra & set(cols)) or 'h1_index' in cols or phase != 'individual':
+            raise ValueError('boosting_input_set_not_in_phase')
     val_keys, offsets = validation_keys(data, folds)
     index_cols, stage1_rows, curves, timings = {}, pd.DataFrame(), [], []
     if any('h1_index' in cols for cols in sets.values()):
         if (stage1 is None or stage1['kind'] != kind or stage1['inner_scope'] != inner_scope or stage1['device'] != device
                 or stage1['n_rows'] != len(data) or stage1.get('followup', False) != followup
-                or not set(settings) <= set(stage1['settings'])):
+                or stage1.get('overrides', {}) != dict(overrides or {}) or not set(settings) <= set(stage1['settings'])):
             raise ValueError('stage1_result_required_for_same_kind_scope_device_settings')
         for setting in settings:
             col = 'idx_' + '_'.join(map(str, setting))
             data[col] = stage1['index'][setting]
             index_cols[setting] = col
-        hp = {boosting.hparam_tag(*s[3:]) + '|' + s[1] + '|' + s[2] for s in settings}
+        hp = {boosting.hparam_tag(*s[3:], overrides) + '|' + s[1] + '|' + s[2] for s in settings}
         mine = lambda r: f"{r['hparams']}|{r['target']}|{r['loss']}" in hp
         st = stage1['stage1']
         stage1_rows = st[[mine(r) for r in st.to_dict('records')]].reset_index(drop=True)
         curves = [c for c in stage1['curves'] if mine(c)]
         timings = [t for t in stage1['timings'] if mine(t)]
     payload = {'data': data, 'labels': boosting_labels(prepared), 'decay_of': decay_of, 'settings': settings, 'sets': sets,
-               'index_cols': index_cols, 'inner_scope': inner_scope, 'device': device, 'n_threads': n_threads}
+               'index_cols': index_cols, 'inner_scope': inner_scope, 'device': device, 'n_threads': n_threads,
+               'custom': custom, 'overrides': dict(overrides or {})}
     done = execute_folds(_run_fold_boosting, payload, folds, workers=workers, log=log)
     out = assemble_folds(done, folds, val_keys, offsets, timings)
     out['curves'] = curves + out.get('curves', [])
     out['params'] = {k: v for f in folds for k, v in done[f['fold']]['params'].items()}
     return {**out, 'stage1': stage1_rows, 'inner_scope': inner_scope, 'kind': kind, 'phase': phase, 'device': device,
-            'followup': followup}
+            'followup': followup, 'custom': custom, 'overrides': dict(overrides or {}), 'settings': list(settings), 'sets': dict(sets)}
 
 
 def curves_frame(curves: list[dict]) -> pd.DataFrame:
@@ -983,27 +1099,43 @@ def expected_boosting_ids(kind: str, sets=BOOSTING_SETS, followup: bool = False)
     return {config_id(_boost_tag(s, name)) for s in boosting.settings(kind, followup=followup) for name in sets}
 
 
+def _team_run(result: dict, prepared: dict) -> bool:
+    """팀 실험인가: custom=True로 돌렸거나 붙인 특징을 입력에 썼다. 그때만 '실제로 돌린 범위'를 완전한 실행으로 본다
+    (기본 실행을 셀 단위로 일부만 저장하는 실수는 계속 막는다)."""
+    extra = set(prepared.get('extra_features', {}))
+    return bool(result.get('custom')) or any(extra & set(cols) for cols in result.get('sets', {}).values())
+
+
+def _ran_ids(result: dict, tag_fn) -> set[str]:
+    return {config_id(tag_fn(s, name)) for s in result['settings'] for name in result['sets']}
+
+
 def finalize_boosting(root: Path, config, prepared: dict, result: dict, *, started: datetime, out_root: Path | None = None,
                       require_complete: bool = True, gpu_name: str | None = None, computed_commit: str | None = None,
-                      log=print) -> dict:
+                      log=print, **meta) -> dict:
     """부스팅 한 종류·한 단계의 마무리: 종료 조건 → 표·예측·곡선(parquet) 저장. 폴더 <시각>_<종류>_<단계>(후속 튜닝은 끝에 _d4).
     지수형 단계는 ① 표·곡선도 함께 저장한다. 선형 Huber② σ 계산 코드도 해시에 포함."""
     kind, phase = result['kind'], result['phase']
     followup = result.get('followup', False)
     stage1 = result['stage1']
     suffix = f'{kind}_{phase}' + (_followup_suffix(kind) if followup else '')
+    if _team_run(result, prepared):
+        expected = _ran_ids(result, lambda s_, n: _boost_tag(s_, n, result.get('overrides')))   # 팀 실험: 실제로 돌린 범위
+    else:
+        expected = expected_boosting_ids(kind, BOOSTING_PHASES[phase], followup)
     if computed_commit:                    # 계산한 세션의 결과를 다른 커밋 코드로 저장만 다시 할 때(폴더 끝 _resaved)
         suffix += '_resaved'
     return finalize_run(root, config, prepared, result, family='boosting', folder_suffix=suffix,
-                        expected_ids=expected_boosting_ids(kind, BOOSTING_PHASES[phase], followup),
+                        expected_ids=expected,
                         code=LINEAR_CODE[:1] + ['src/models/boosting.py'] + LINEAR_CODE[1:],
                         device={'boosting': result['device'], 'config_device': boosting.default_device(kind),
                                 'device_matches_config': result['device'] == boosting.default_device(kind), 'gpu': gpu_name}, part_keys=['part', 'target', 'loss', 'hparams'],
                         started=started, out_root=out_root, require_complete=require_complete,
                         extra_versions=boosting.library_versions(),
                         extra_tables={'curves': (curves_frame(result['curves']), 'parquet')},
-                        extra_record={'kind': kind, 'phase': phase, 'followup': followup, 'computed_commit': computed_commit, 'library_params_by_setting': result.get('params', {}),
-                                      'stage1_rows': int(len(stage1))}, log=log)
+                        extra_record={'kind': kind, 'phase': phase, 'followup': followup, 'computed_commit': computed_commit,
+                                      'custom': bool(result.get('custom', False)), 'overrides': result.get('overrides', {}), 'library_params_by_setting': result.get('params', {}),
+                                      'stage1_rows': int(len(stage1))}, log=log, **meta)
 
 
 def measure_boosting_fit(prepared: dict, config, setting, *, fold_no: int = 16, input_set: str = 'ind:size+bm+mom+sigma',
@@ -1283,20 +1415,31 @@ LINEAR_CODE = ['src/evaluation/model_test.py', 'src/models/linear.py', 'src/feat
 
 
 def finalize_linear(root: Path, config, prepared: dict, result: dict, *, started: datetime, out_root: Path | None = None,
-                    require_complete: bool = True, log=print) -> dict:
-    """합친 결과로 종료 조건 검사 → 보고 표 → 저장(쓰기 전용 새 폴더). 검사 실패면 표·예측을 저장하지 않고 run.json에 실패를 남긴다."""
+                    require_complete: bool = True, custom: bool = False, log=print, **meta) -> dict:
+    """합친 결과로 종료 조건 검사 → 보고 표 → 저장(쓰기 전용 새 폴더). 검사 실패면 표·예측을 저장하지 않고 run.json에 실패를 남긴다.
+    팀 실험(custom=True 또는 붙인 특징 사용)이면 실제로 돌린 범위를 다 채웠는지 본다. meta: author, experiment, description, changes."""
+    if 'sets' in result and _team_run({**result, 'custom': custom}, prepared):
+        expected = {config_id({'family': 'linear', 'model': m, 'target': t, 'loss': l, 'input_set': n})
+                    for m, t, l in result['settings'] for n in result['sets']}
+    else:
+        expected = expected_config_ids()
     return finalize_run(root, config, prepared, result, family='linear', folder_suffix='linear',
-                        expected_ids=expected_config_ids(), code=LINEAR_CODE, device={'linear': 'cpu'},
+                        expected_ids=expected, code=LINEAR_CODE, device={'linear': 'cpu'},
                         part_keys=['model', 'loss'], started=started, out_root=out_root,
-                        require_complete=require_complete, log=log)
+                        require_complete=require_complete, log=log, **meta)
 
 
 def finalize_run(root: Path, config, prepared: dict, result: dict, *, family: str, folder_suffix: str, expected_ids: set,
                  code: list[str], device: dict, part_keys: list[str], started: datetime, out_root: Path | None = None,
                  require_complete: bool = True, extra_versions: dict | None = None, extra_tables: dict | None = None,
-                 extra_record: dict | None = None, log=print) -> dict:
-    """선형·부스팅 공통 마무리: 종료 조건 → 보고 표 → 저장(폴더 <시각>_<folder_suffix>, 쓰기 전용).
-    extra_tables: {이름: (표, 'csv'|'parquet')} — 통과했을 때만 함께 저장."""
+                 extra_record: dict | None = None, log=print, author: str | None = None, experiment: str | None = None,
+                 description: str = '', changes: dict | None = None) -> dict:
+    """선형·부스팅·팀 모델 공통 마무리: 종료 조건 → 보고 표 → 저장(쓰기 전용 새 폴더).
+
+    결과 규격(2026-11-15, 팀 공유): <저장 위치>/<작성자>/<시각>_<실험>_<folder_suffix>/. 저장 위치는 config PATHS.model_results
+    (outputs/model_results/), Colab처럼 다른 곳에 둘 때만 out_root. 작성자·실험은 반드시 준다(폴더 이름에 못 쓰는 문자는 거부).
+    extra_tables: {이름: (표, 'csv'|'parquet')} — 통과했을 때만 함께 저장. 붙인 특징이 있으면 feature_coverage.csv도 저장."""
+    check_result_names(author, experiment)
     t0 = time.perf_counter()
     missing = expected_ids - set(result['predictions'])
     if require_complete and missing:
@@ -1307,18 +1450,20 @@ def finalize_run(root: Path, config, prepared: dict, result: dict, *, family: st
     passed = all(v for k, v in checks.items() if k != 'scipy_independent_max_error')
     log(f"종료 조건 {'통과' if passed else '실패'} ({time.perf_counter() - t0:.0f}초): "
         + ', '.join(f'{k}={v}' for k, v in checks.items()))
-    out_root = Path(out_root) if out_root is not None else root / config['PATHS']['run_records'] / 'model_test'
-    folder = out_root / (started.strftime('%Y%m%dT%H%M%S') + '_' + folder_suffix)
-    folder.mkdir(parents=True, exist_ok=False)
+    folder = result_folder(root, config, author=author, experiment=experiment, started=started, suffix=folder_suffix,
+                           out_root=out_root)
     if passed:
         for name, table in tables.items():
             table.to_csv(folder / f'{name}.csv', index=False, encoding='utf-8-sig')
         prediction_frame(result).to_parquet(folder / 'validation_predictions.parquet', index=False)
-        for name, (table, fmt) in (extra_tables or {}).items():
+        extra = dict(extra_tables or {})
+        if len(prepared.get('feature_coverage', [])):
+            extra['feature_coverage'] = (prepared['feature_coverage'], 'csv')
+        for tname, (table, fmt) in extra.items():
             if fmt == 'parquet':
-                table.to_parquet(folder / f'{name}.parquet', index=False)
+                table.to_parquet(folder / f'{tname}.parquet', index=False)
             else:
-                table.to_csv(folder / f'{name}.csv', index=False, encoding='utf-8-sig')
+                table.to_csv(folder / f'{tname}.csv', index=False, encoding='utf-8-sig')
     import os
     import scipy
     import sklearn
@@ -1337,18 +1482,132 @@ def finalize_run(root: Path, config, prepared: dict, result: dict, *, family: st
                          **device},
               'constant_score_months': ic.loc[ic.reason.eq('constant_score'), ['config', 'scope', 'target_month']]
                                        .to_dict('records'),
+              'author': author, 'experiment': experiment, 'description': description, 'changes': changes or {},
+              'extra_features': prepared.get('extra_features', {}),
+              'input_sets': {k: list(v) for k, v in result.get('sets', {}).items()},
               **(extra_record or {}),
               'outputs_sha256': {p.name: sha256(p) for p in sorted(folder.iterdir())}}
     for name, value in prepared['inputs'].items():
         if sha256(root / name) != value:
             record['status'] = 'FAILED_SOURCE_CHANGED'
     (folder / 'run.json').write_text(json.dumps(record, ensure_ascii=False, indent=2, default=str), encoding='utf-8')
+    if record['commit'] is None:
+        log('주의: Git 커밋을 알 수 없다(저장소를 clone하지 않고 압축으로 받았거나 git이 없음). 어떤 코드로 만든 결과인지 추적할 수 없으니 '
+            'git clone한 폴더에서 다시 실행하는 것을 권한다.')
+    if record['status'] == 'PASSED':
+        pack_result(folder)
     log(f"저장: {folder} ({record['status']})")
     return {'status': record['status'], 'run_dir': str(folder), 'checks': checks, 'tables': tables}
 
 
+# ---------- 팀 실험 공통 함수(새 모델·새 노트북에서 가져다 씀) ----------
+
+
+RESULT_ZIP = 'result.zip'
+NOT_SHARED = {'validation_predictions.parquet', RESULT_ZIP}    # 예측값은 커서(선형 356MB) 각자 PC에만
+
+
+def pack_result(folder: Path) -> Path:
+    """통과한 결과 폴더의 공유용 파일(run.json·표·곡선 등, 예측값 제외)을 result.zip 하나로 묶는다(Git에는 이것만 올림).
+    같은 내용이면 같은 파일이 되도록 파일 순서와 시각을 고정한다."""
+    import zipfile
+    folder = Path(folder)
+    files = sorted(f for f in folder.iterdir() if f.is_file() and f.name not in NOT_SHARED)
+    if 'run.json' not in {f.name for f in files}:
+        raise ValueError('run_json_missing')
+    out = folder / RESULT_ZIP
+    with zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_DEFLATED) as z:
+        for f in files:
+            info = zipfile.ZipInfo(f.name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            z.writestr(info, f.read_bytes())
+    return out
+
+
+def check_result_names(author, experiment) -> None:
+    """작성자·실험 이름: 비어 있지 않고 영문·숫자·_·-만(폴더 이름·Git 경로). 한글은 Mac이 다른 방식(NFD)으로 저장해
+    Git에서 같은 폴더가 둘로 보일 수 있어 받지 않는다(2026-11-15)."""
+    for label, value in (('author', author), ('experiment', experiment)):
+        text = '' if value is None else str(value)
+        if not re.fullmatch(r'[A-Za-z0-9_-]+', text):
+            raise ValueError(f'{label}_must_be_ascii_letters_digits_underscore_hyphen:{value!r}')
+
+
+def result_folder(root: Path, config, *, author: str, experiment: str, started: datetime, suffix: str,
+                  out_root: Path | None = None) -> Path:
+    """결과 폴더 경로: <model_results>/<작성자>/<시각>_<실험>_<모델·단계>. 만들기만 하고 이미 있으면 멈춘다(덮어쓰기 없음)."""
+    check_result_names(author, experiment)
+    base = Path(out_root) if out_root is not None else root / config['PATHS']['model_results']
+    folder = base / author / f"{started.strftime('%Y%m%dT%H%M%S')}_{experiment}_{suffix}"
+    folder.mkdir(parents=True, exist_ok=False)
+    return folder
+
+def validation_rows(prepared: dict, config) -> pd.DataFrame:
+    """채점할 행(2006~2021, 수익률 있는 전 종목 133,876행)과 순서. 팀 모델의 예측 배열은 이 순서를 따라야 한다.
+    열: stock_id, target_month, fold, y(원수익률), common(학습 행 여부), row(prepared['data']의 행 번호)."""
+    return validation_keys(prepared['data'], plan_folds(check_grid(config)))[0]
+
+
+def fold_rows(prepared: dict, fold: dict, *, inner_scope: str = 'common') -> dict:
+    """한 Fold의 행 마스크(prepared['data'] 기준): fit(학습), inner(내부 검증, 설정 고르기), out(바깥 검증=채점)과 학습 행 해시.
+    선형·부스팅과 같은 규칙: 학습 = 학습 연도의 학습 행, 내부 검증 = 직전 1년, 고른 뒤 다시 학습하지 않음."""
+    if inner_scope not in INNER_SCOPES:
+        raise ValueError('inner_scope_unknown')
+    data = prepared['data']
+    year = data.year.to_numpy()
+    train = data.train.to_numpy(bool)
+    predict = data.predict.to_numpy(bool)
+    scope = predict if inner_scope == 'full' else train
+    lo, hi = fold['train_years']
+    fit = train & (year >= lo) & (year <= hi)
+    return {'fit': fit, 'inner': scope & (year == fold['inner_valid_year']), 'out': predict & (year == fold['valid_year']),
+            'train_rows_sha256': hashlib.sha256(np.flatnonzero(fit).tobytes()).hexdigest()}   # FoldContext와 같은 규칙
+
+
+def save_result(root: Path, config, prepared: dict, *, model: str, predictions: dict, selections: pd.DataFrame,
+                started: datetime, author: str, experiment: str, description: str = '', changes: dict | None = None,
+                family: str = 'custom', out_root: Path | None = None, inner_scope: str = 'common', code: list[str] | None = None,
+                device: dict | None = None, extra_tables: dict | None = None, log=print) -> dict:
+    """팀원이 직접 만든 모델의 결과를 선형·부스팅과 같은 형식으로 저장한다(종료 조건 → 표 → 폴더).
+
+    predictions = {(목표값, 손실, 입력 조합 이름, 초모수 이름): validation_rows 순서의 예측 배열(133,876개, NaN 없음)}.
+    selections  = Fold × 설정마다 한 줄: target, loss, input_set, hparams, fold, valid_year, train_ic(학습 행 평균 IC).
+                  그 밖의 열(고른 값 등)은 그대로 fold_table에 남는다. 학습 행 해시는 fold_rows 규칙으로 채운다.
+    """
+    grid = check_grid(config)
+    folds = {f['fold']: f for f in plan_folds(grid)}
+    val_keys = validation_rows(prepared, config)
+    preds = {}
+    for key, arr in predictions.items():
+        target, loss, input_set, hparams = key
+        arr = np.asarray(arr, dtype=float)
+        if arr.shape != (len(val_keys),):
+            raise ValueError(f'prediction_length:{key}')
+        preds[config_id({'family': family, 'model': model, 'target': target, 'loss': loss, 'input_set': input_set,
+                         'hparams': hparams})] = arr
+    need = {'target', 'loss', 'input_set', 'hparams', 'fold', 'valid_year', 'train_ic'}
+    if not need <= set(selections.columns):
+        raise ValueError('selections_columns_missing:' + ','.join(sorted(need - set(selections.columns))))
+    sel = selections.copy()
+    sel['family'], sel['model'] = family, model
+    sel['ties'] = sel['ties'] if 'ties' in sel else 1
+    sha = {k: fold_rows(prepared, f, inner_scope=inner_scope)['train_rows_sha256'] for k, f in folds.items()}
+    sel['train_rows_sha256'] = sel.fold.map(sha)
+    if sel.train_rows_sha256.isna().any() or not sel.valid_year.equals(sel.fold.map(lambda k: folds[k]['valid_year'])):
+        raise ValueError('selections_fold_or_valid_year_invalid')
+    ids = set(_selection_ids(sel))
+    if ids != set(preds):
+        raise ValueError('selections_and_predictions_differ')
+    result = {'val_keys': val_keys, 'predictions': preds, 'selections': sel, 'inner_ic': pd.DataFrame(),
+              'stage1': pd.DataFrame(), 'timings': pd.DataFrame({'model': [model], 'seconds': [np.nan]}), 'inner_scope': inner_scope}
+    return finalize_run(root, config, prepared, result, family=family, folder_suffix=model, expected_ids=set(preds),
+                        code=(code or []) + LINEAR_CODE[1:], device=device or {}, part_keys=['model'], started=started,
+                        out_root=out_root, require_complete=True, extra_tables=extra_tables, log=log, author=author,
+                        experiment=experiment, description=description, changes=changes)
+
+
 def run(root: Path, config, *, execute: bool = False, inner_scope: str = 'common', out_root: Path | None = None,
-        workers: int = 1, prepared: dict | None = None, log=print) -> dict:
+        workers: int = 1, prepared: dict | None = None, log=print, author: str | None = None, experiment: str = 'base') -> dict:
     """execute=False: 입력 준비·검사와 셀(모델 × 손실)별 예상 시간만. execute=True: 6개 셀을 차례로 계산 → 합침 → 종료 조건 → 저장."""
     started = datetime.now()
     t0 = time.perf_counter()
@@ -1370,7 +1629,8 @@ def run(root: Path, config, *, execute: bool = False, inner_scope: str = 'common
         t_part = time.perf_counter()
         parts.append(run_linear(prepared, config, inner_scope=inner_scope, settings=part_settings(m, l), workers=workers, log=log))
         log(f'[{m} × {l}] 완료 {time.perf_counter() - t_part:.0f}초')
-    out = finalize_linear(root, config, prepared, merge_results(parts), started=started, out_root=out_root, log=log)
+    out = finalize_linear(root, config, prepared, merge_results(parts), started=started, out_root=out_root, log=log,
+                          author=author, experiment=experiment)
     return {**summary, **out, 'seconds': time.perf_counter() - t0}
 
 
@@ -1382,11 +1642,15 @@ def main(argv=None):
     parser.add_argument('--inner-scope', choices=INNER_SCOPES, default='common')
     parser.add_argument('--workers', type=int, default=1)
     parser.add_argument('--out-root', default=None)
+    parser.add_argument('--author', default=None, help='결과 폴더의 작성자(--execute에 필수)')
+    parser.add_argument('--experiment', default='base')
     args = parser.parse_args(argv)
     root = Path.cwd()
     config = yaml.safe_load((root / args.config).read_text(encoding='utf-8'))
+    if args.execute:
+        check_result_names(args.author, args.experiment)
     out = run(root, config, execute=args.execute, inner_scope=args.inner_scope, workers=args.workers,
-              out_root=Path(args.out_root) if args.out_root else None)
+              out_root=Path(args.out_root) if args.out_root else None, author=args.author, experiment=args.experiment)
     out.pop('tables', None)
     print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
 

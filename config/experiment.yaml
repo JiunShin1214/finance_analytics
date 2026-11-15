@@ -37,6 +37,8 @@ PATHS:
   final_test: outputs/final_test/
   models: models/
   run_records: outputs/run_id/
+  model_results: outputs/model_results/   # model_test 결과(팀 공유 규격): <작성자>/<시각>_<실험>_<모델·단계>/ [2026-11-15]
+  model_summary: outputs/모델_v1/          # model_test 비교 표·그림(jiun 비교 노트북 산출, 공유 안 함) [2026-11-15]
 COLUMN_MAPPING:
   panel:
     stock_id: stock_id

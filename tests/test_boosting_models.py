@@ -181,10 +181,11 @@ class BoostingRunTests(unittest.TestCase):
         from datetime import datetime
         with tempfile.TemporaryDirectory() as tmp:
             out = mt.finalize_boosting(Path(__file__).resolve().parents[1], CONFIG, self.prep, idx, started=datetime(2026, 1, 1),
-                                       out_root=Path(tmp), require_complete=False, log=quiet)
+                                       out_root=Path(tmp), require_complete=False, log=quiet, author='tester', experiment='base')
             folder = Path(out['run_dir'])
-            self.assertEqual((out['status'], folder.name), ('PASSED', '20260101T000000_xgb_reg_index'))
+            self.assertEqual((out['status'], folder.name, folder.parent.name), ('PASSED', '20260101T000000_base_xgb_reg_index', 'tester'))
             self.assertTrue((folder / 'curves.parquet').is_file() and (folder / 'stage1_h1_index.csv').is_file())
+            self.assertTrue((folder / 'result.zip').is_file())                  # 통과한 결과는 공유용 zip도 만든다
             record = json.loads((folder / 'run.json').read_text(encoding='utf-8'))
             self.assertEqual((record['phase'], record['device']['boosting'], record['device']['device_matches_config']),
                              ('index', 'cpu', False))
@@ -211,9 +212,9 @@ class BoostingRunTests(unittest.TestCase):
         from datetime import datetime
         with tempfile.TemporaryDirectory() as tmp:
             out = mt.finalize_boosting(Path(__file__).resolve().parents[1], CONFIG, self.prep, r, started=datetime(2026, 1, 1),
-                                       out_root=Path(tmp), require_complete=False, log=quiet)
+                                       out_root=Path(tmp), require_complete=False, log=quiet, author='tester', experiment='base')
             folder = Path(out['run_dir'])
-            self.assertEqual(folder.name, '20260101T000000_lgb_rankreg_individual_d4')
+            self.assertEqual(folder.name, '20260101T000000_base_lgb_rankreg_individual_d4')
             # 설정 1개를 다 돌렸으므로 완전한 실행으로 검사된다 → Fold 1개뿐이라 행 수·192개월 검사만 실패해야 한다
             self.assertEqual(out['status'], 'FAILED_END_CHECKS')
             self.assertEqual({k for k, v in out['checks'].items() if v is False}, {'validation_prediction_rows', 'all_192_months_ic'})
