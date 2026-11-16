@@ -321,6 +321,6 @@ python -m src.pipeline --stage h1-mean-tests --execute
 
 - 공유: 코드·노트북·결과는 Git, 입력 `data/`만 Drive(내려받아 저장소 `data/`에 그대로 둔다).
 - Git 충돌을 막는 규칙: 공용 파일(`src/`의 기존 모듈, `notebook/`의 공용 노트북, `config/experiment.yaml`, `requirements.txt`)은 관리자만 고친다. 각자는 `notebook/<이름>/`, `src/team/<이름>/`에 새 파일만 만든다.
-- 실행 결과는 `outputs/model_results/<이름>/<시각>_<실험>_<모델·단계>/`에 같은 규격으로 생기고(`<이름>`·`<실험>`은 영문·숫자·`_`·`-`), Git에는 실행마다 `result.zip`(run.json·표·곡선, 예측값 제외) 하나만 올라간다.
-- 결과를 비교하려면 공통 함수만 쓴다: `prepare_inputs`(새 특징은 `extra_features`), `plan_folds`·`fold_rows`, `validation_rows`, 저장은 `finalize_linear`·`finalize_boosting`·`save_result`. 예시는 `notebook/model_test_experiment_example.ipynb`.
+- 공용 노트북(선형·부스팅) 결과는 `outputs/model_results/<이름>/<시각>_<실험>_<모델·단계>/`에 생긴다(`<이름>`은 영문·숫자·`_`·`-`, 실험 이름은 자유 — 한글이면 Mac에서 깨져 보일 수 있다). Git에는 실행마다 `result.zip`(표·곡선, 예측값 제외) 하나만 올라간다. 무엇을 돌렸는지는 표의 열(모델·목표값·손실·초모수·입력 조합·입력 변환)과 폴더 이름으로 보고, 코드는 Git 이력으로 본다.
+- 팀원 실험은 형식 제약이 없다: 각자 노트북에서 자유롭게 돌리고 "모델 / 하이퍼파라미터 / 조건 → 결과(평균 IC·ICIR 등)" 표를 `outputs/model_results/<이름>/`에 csv로 둔다. 필요하면 `prepare_inputs`, `plan_folds`·`fold_rows`, `validation_rows`, `monthly_ic`를 가져다 쓸 수 있다. 예시는 `notebook/model_test_experiment_example.ipynb`.
 - XGBoost는 GPU(Colab). Colab 결과는 내 드라이브 `model_results/<이름>/`에 저장한 뒤 내려받아 로컬 `outputs/model_results/<이름>/`에 넣고 커밋한다.

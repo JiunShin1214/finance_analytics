@@ -10,7 +10,8 @@
                           alpha=0)를 맞춘 척도 추정값 [LWZ Table A.2, scikit-learn 기본값].
     HuberRegressor의 목적함수 Σ σ·H_ε(r/σ)는 σ를 고정하면 (1/σ)·Σ ρ_{εσ}(r)이라, OLS Huber②의 계수는 위 직접 구현에
     δ = 1.35σ를 넣은 것과 같다(check_huber_regressor_agreement). Ridge Huber②도 같은 δ에 같은 L2 벌점을 건다.
-입력은 이미 매달 순위 [−1, 1]이라 추가 표준화를 하지 않는다(ridge_input_standardize: false).
+입력은 이미 매달 변환되어 있어(기본 z점수, 2026-11-16 튜닝 7 결정 / 이전 순위 [−1, 1]) 추가 표준화를 하지 않는다
+(ridge_input_standardize: false).
 난수 없음. 결과는 계수·절편과 진단값(dict)만 돌려주고 파일을 쓰지 않는다.
 """
 from __future__ import annotations
@@ -25,17 +26,6 @@ LOSSES = ('mse', 'huber_q999', 'huber_sigma135')
 RIDGE_LAMBDAS = (0.0001, 0.001, 0.01, 0.1, 1.0, 10.0)
 HUBER_QUANTILE = 0.999
 HUBER_EPSILON = 1.35
-
-
-def check_linear_grid(grid: Mapping) -> None:
-    """config MODEL_GRID의 선형 부분이 이 모듈의 고정값과 같은지 확인한다."""
-    if (tuple(grid.get('linear_models', ())) != LINEAR_MODELS
-            or tuple(grid.get('regression_losses', ())) != LOSSES
-            or tuple(float(x) for x in grid.get('ridge_lambdas', ())) != RIDGE_LAMBDAS
-            or float(grid.get('huber_q999_quantile', -1)) != HUBER_QUANTILE
-            or float(grid.get('huber_sigma_epsilon', -1)) != HUBER_EPSILON
-            or grid.get('ridge_input_standardize') is not False):
-        raise ValueError('linear_model_grid_not_approved')
 
 
 def _arrays(X, y):
@@ -168,8 +158,8 @@ def fit_linear(X, y, *, model: str, loss: str, ridge_lambda: float | None = None
             raise ValueError('ols_has_no_lambda')
         lam = 0.0
     else:
-        if ridge_lambda is None or float(ridge_lambda) not in RIDGE_LAMBDAS:
-            raise ValueError('ridge_lambda_not_approved')
+        if ridge_lambda is None or not float(ridge_lambda) > 0:      # 승인 목록 검사는 뺌(2026-11-15 결정 마) — 튜닝 6번 λ 100·1000
+            raise ValueError('ridge_lambda_must_be_positive')
         lam = float(ridge_lambda)
     if loss != 'mse':
         if delta is None or not (math.isfinite(delta) and delta > 0):

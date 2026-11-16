@@ -47,7 +47,7 @@ credentials/
 # 실행 이력·데이터 관측은 폴더 표시 파일까지 모두 제외
 /outputs/run_id/
 # model_test 결과는 팀 공유(2026-11-15): outputs/model_results/<작성자>/<결과 폴더>/result.zip만 커밋한다(실행 1회 = 파일 1개).
-# result.zip = run.json·표·곡선(예측값 제외, 선형 예측값 356MB > GitHub 100MB). 풀린 파일과 예측값은 각자 PC에만.
+# result.zip = 표·곡선(예측값 제외, 선형 예측값 356MB > GitHub 100MB). 풀린 파일과 예측값은 각자 PC에만.
 !/outputs/model_results/**/result.zip
 # 팀원 결과 표(2026-11-15): 작성자 폴더 바로 아래 csv는 올린다(요약 표는 수 KB). 예측값 parquet는 제외 그대로.
 !/outputs/model_results/*/*.csv

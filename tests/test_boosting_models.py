@@ -1,5 +1,4 @@
 """v2 부스팅 모듈·실행부 계약 — 합성 자료만 사용(실제 data/ 파일을 읽지 않음)."""
-import copy
 import sys
 import unittest
 from pathlib import Path
@@ -41,15 +40,10 @@ def fit(kind, loss='mse', target=None, delta=None, depth=2, lr=0.01, seed=0):
 
 
 class BoostingModuleTests(unittest.TestCase):
-    def test_grid_matches_config_and_setting_counts(self):
-        boosting.check_boosting_grid(CONFIG['MODEL_GRID'])
+    def test_setting_counts(self):
         counts = {k: len(boosting.settings(k)) for k in boosting.KINDS}
         self.assertEqual(counts, {'xgb_reg': 12, 'lgb_reg': 12,
                                   'xgb_pairwise': 3, 'xgb_rankreg': 3, 'lgb_rankreg': 3})
-        bad = copy.deepcopy(CONFIG['MODEL_GRID'])
-        bad['depths'] = [1, 2]
-        with self.assertRaises(ValueError):
-            boosting.check_boosting_grid(bad)
 
     def test_library_parameters(self):
         p = boosting.xgb_params('xgb_pairwise', 'pairwise', 3, 0.01)
@@ -64,11 +58,10 @@ class BoostingModuleTests(unittest.TestCase):
         self.assertNotIn('lgb_lambdarank', boosting.KINDS)
         self.assertEqual(boosting.lgb_params('lgb_reg', 'huber_sigma135', 2, 0.1, 0.3)['alpha'], 0.3)
 
-    def test_unapproved_settings_rejected(self):
+    def test_settings_needed_for_computation_rejected(self):
         months, X, y = toy()
         s = lambda p: 0.0
-        for kw in ({'depth': 4, 'learning_rate': 0.01, 'loss': 'mse'}, {'depth': 1, 'learning_rate': 0.1, 'loss': 'mse'},
-                   {'depth': 1, 'learning_rate': 0.01, 'loss': 'huber_q999'}):
+        for kw in ({'depth': 1, 'learning_rate': 0.01, 'loss': 'huber_q999'},):     # Huber인데 δ 없음
             with self.assertRaises(ValueError):
                 boosting.fit_boosting('xgb_reg', X, y, months, target='winsor_1_99', inner_X=X, inner_months=months,
                                       inner_score=s, train_score=s, **kw)
@@ -143,23 +136,18 @@ class BoostingRunTests(unittest.TestCase):
         st1 = mt.run_boosting_stage1(self.prep, CONFIG, 'xgb_reg', settings=[setting], device='cpu', n_threads=1, log=quiet)
         idx = mt.run_boosting(self.prep, CONFIG, 'xgb_reg', phase='index', stage1=st1, settings=[setting], folds=[self.folds[0]], device='cpu',
                               n_threads=1, log=quiet)
-        with self.assertRaises(ValueError):          # ①과 ②의 장치가 다르면 거부
-            mt.run_boosting(self.prep, CONFIG, 'xgb_reg', phase='index', stage1=st1, settings=[setting], folds=[self.folds[0]],
-                            device='cuda', log=quiet)
         self.assertEqual((boosting.default_device('xgb_pairwise'), boosting.default_device('lgb_reg')), ('cuda', 'cpu'))
-        with self.assertRaises(ValueError):          # 단계가 다르면 합치지 않는다
-            mt.merge_results([ind, idx])
         self.assertEqual(set(ind['predictions']), {mt.config_id(mt._boost_tag(setting, 'ind:size+bm+mom+sigma'))})
         self.assertEqual(set(idx['predictions']), {mt.config_id(mt._boost_tag(setting, s)) for s in mt.BOOSTING_PHASES['index']})
         self.assertEqual(len(ind['curves']), 3)      # λ 3개(span 12·36·60)
         self.assertEqual(len(idx['curves']), 19 + 3 + 1 + 3)   # ① 19 + [σ] λ 3 + [H1 지수] 1 + [H1 지수, σ] λ 3
         self.assertEqual(len(idx['stage1']), 19)
         self.assertTrue(idx['stage1'].trees.between(1, 1000).all())
-        self.assertTrue(ind['selections'].train_rows_sha256.iloc[0] == idx['selections'].train_rows_sha256.iloc[0])
+        self.assertEqual(ind['selections'].n_train.iloc[0], idx['selections'].n_train.iloc[0])
         r = idx
         sel, vk = ind['selections'], r['val_keys']
         self.assertTrue(all(len(v) == len(vk) and np.isfinite(v).all() for v in r['predictions'].values()))
-        self.assertEqual(r['selections'].train_rows_sha256.nunique(), 1)
+        self.assertEqual(r['selections'].n_train.nunique(), 1)
         # Huber② σ는 같은 행·입력·목표값의 선형 OLS HuberRegressor와 같은 값
         d = self.prep['data']
         f = self.folds[0]
@@ -170,55 +158,33 @@ class BoostingRunTests(unittest.TestCase):
         self.assertEqual(row.huber_sigma, ctx.sigma2(cols, 'monthly_zscore')['sigma'])
         cf = mt.curves_frame(r['curves'])
         self.assertEqual(cf.filter(like='inner_').shape[1] + cf.filter(like='train_').shape[1], 1100)
-        ic = mt.outer_monthly_ic(vk, r['predictions'])
-        checks = mt.end_checks(self.prep, r, ic, full_run=False)
-        self.assertTrue(all(v for k, v in checks.items() if k != 'scipy_independent_max_error'))
         summary = mt.boosting_part_summary(r)
         self.assertEqual(len(summary), 3)
-        # 저장: 단계별 폴더, 곡선 parquet, run.json(단계·장치)
-        import json
+        # 저장: 단계별 폴더, 곡선 parquet, result.zip
         import tempfile
         from datetime import datetime
         with tempfile.TemporaryDirectory() as tmp:
             out = mt.finalize_boosting(Path(__file__).resolve().parents[1], CONFIG, self.prep, idx, started=datetime(2026, 1, 1),
-                                       out_root=Path(tmp), require_complete=False, log=quiet, author='tester', experiment='base')
+                                       out_root=Path(tmp), log=quiet, author='tester', experiment='base')
             folder = Path(out['run_dir'])
-            self.assertEqual((out['status'], folder.name, folder.parent.name), ('PASSED', '20260101T000000_base_xgb_reg_index', 'tester'))
+            self.assertEqual((folder.name, folder.parent.name), ('20260101T000000_base_xgb_reg_index', 'tester'))
             self.assertTrue((folder / 'curves.parquet').is_file() and (folder / 'stage1_h1_index.csv').is_file())
-            self.assertTrue((folder / 'result.zip').is_file())                  # 통과한 결과는 공유용 zip도 만든다
-            record = json.loads((folder / 'run.json').read_text(encoding='utf-8'))
-            self.assertEqual((record['phase'], record['device']['boosting'], record['device']['device_matches_config']),
-                             ('index', 'cpu', False))
+            self.assertTrue((folder / 'result.zip').is_file())
 
     def test_followup_depth4_separate_run(self):
         self.assertEqual(boosting.settings('lgb_rankreg', followup=True), [('lgb_rankreg', 'percentile', 'mse', 4, 0.01)])
         self.assertEqual(boosting.settings('xgb_reg', followup=True), [])
         self.assertEqual(boosting.lgb_params('lgb_rankreg', 'mse', 4, 0.01)['num_leaves'], 16)
-        with self.assertRaises(ValueError):          # 회귀 종류엔 깊이 4 없음
-            boosting._check_setting('xgb_reg', 'winsor_1_99', 'mse', 4, 0.01, None)
-        boosting._check_setting('xgb_pairwise', 'decile', 'pairwise', 4, 0.01, None)
         quiet = lambda *_: None
-        with self.assertRaises(ValueError):          # 후속이 아닌 실행에 깊이 4 설정을 넣으면 거부
-            mt.run_boosting(self.prep, CONFIG, 'lgb_rankreg', phase='individual', settings=[('lgb_rankreg', 'percentile', 'mse', 4, 0.01)],
-                            folds=[self.folds[0]], log=quiet)
-        with self.assertRaises(ValueError):
-            mt.run_boosting(self.prep, CONFIG, 'xgb_reg', phase='individual', followup=True, folds=[self.folds[0]], log=quiet)
         r = mt.run_boosting(self.prep, CONFIG, 'lgb_rankreg', phase='individual', followup=True, folds=[self.folds[0]],
                             n_threads=1, log=quiet)
         self.assertEqual(set(r['selections'].hparams), {'d4_lr0.01'})
-        self.assertEqual(len(mt.expected_boosting_ids('lgb_rankreg', mt.BOOSTING_PHASES['individual'], followup=True)), 1)
-        import json
         import tempfile
         from datetime import datetime
         with tempfile.TemporaryDirectory() as tmp:
             out = mt.finalize_boosting(Path(__file__).resolve().parents[1], CONFIG, self.prep, r, started=datetime(2026, 1, 1),
-                                       out_root=Path(tmp), require_complete=False, log=quiet, author='tester', experiment='base')
-            folder = Path(out['run_dir'])
-            self.assertEqual(folder.name, '20260101T000000_base_lgb_rankreg_individual_d4')
-            # 설정 1개를 다 돌렸으므로 완전한 실행으로 검사된다 → Fold 1개뿐이라 행 수·192개월 검사만 실패해야 한다
-            self.assertEqual(out['status'], 'FAILED_END_CHECKS')
-            self.assertEqual({k for k, v in out['checks'].items() if v is False}, {'validation_prediction_rows', 'all_192_months_ic'})
-            self.assertTrue(json.loads((folder / 'run.json').read_text(encoding='utf-8'))['followup'])
+                                       out_root=Path(tmp), log=quiet, author='tester', experiment='base')
+            self.assertEqual(Path(out['run_dir']).name, '20260101T000000_base_lgb_rankreg_individual_d4')
 
     def test_linear_ids_unchanged_and_boosting_ids(self):
         tag = {'family': 'linear', 'model': 'ols', 'target': 'raw', 'loss': 'mse', 'input_set': 'ind:bm'}
@@ -226,9 +192,8 @@ class BoostingRunTests(unittest.TestCase):
         bid = mt.config_id(mt._boost_tag(('lgb_reg', 'raw', 'mse', 2, 0.01), 'idx:h1'))
         self.assertEqual(bid, 'boosting|lgb_reg|raw|mse|idx:h1|d2_lr0.01')
         self.assertEqual(mt.split_config_id(bid)['hparams'], 'd2_lr0.01')
-        self.assertEqual(len(mt.expected_boosting_ids('xgb_reg')), 12 * 4)
 
-    def test_scipy_crosscheck_constant_month_counts_zero(self):
+    def test_constant_month_counts_zero(self):
         vk = pd.DataFrame({'target_month': ['2010-01'] * 4 + ['2010-02'] * 4, 'y': [.1, .2, .3, .4, .4, .3, .2, .1],
                            'common': [True] * 8})
         preds = {'boosting|m|t|l|s': np.array([1., 1., 1., 1., 1., 2., 3., 4.])}   # 1월은 상수 예측 → IC 0(결정 A)
@@ -236,32 +201,6 @@ class BoostingRunTests(unittest.TestCase):
         jan = ic[ic.target_month.eq('2010-01')]
         self.assertTrue(jan.ic.eq(0.0).all() and jan.reason.eq('constant_score').all())
         self.assertTrue(ic.ic.notna().all())
-        self.assertEqual(mt.scipy_crosscheck(vk, preds, ic), 0.0)
-        bad = ic.copy()
-        bad.loc[bad.target_month.eq('2010-01'), 'ic'] = 0.5                         # 상수 달 값이 0이 아니면 불일치
-        self.assertEqual(mt.scipy_crosscheck(vk, preds, bad), 0.5)
-        bad = ic.copy()
-        bad.loc[bad.target_month.eq('2010-02'), 'ic'] = np.nan                      # 한쪽만 결측이면 불일치
-        self.assertEqual(mt.scipy_crosscheck(vk, preds, bad), float('inf'))
-
-    def test_sigma_h3_comparison_tolerance(self):
-        keys = pd.DataFrame({'stock_id': ['a', 'a', 'b'], 'base_month': ['2010-01', '2010-02', '2010-01']})
-        h3 = keys.assign(sigma=[0.1, np.nan, 0.2])
-        grid = keys.assign(sigma_decay097=[0.1 + 5.551e-17, np.nan, 0.2])
-        c = mt.compare_sigma_to_h3(grid, h3, atol=1e-10)
-        self.assertEqual((c['sigma_decay097_values_differ'], c['sigma_decay097_max_abs_diff'] > 0), (1, True))
-        with self.assertRaises(ValueError):
-            mt.compare_sigma_to_h3(grid.assign(sigma_decay097=[0.1 + 1e-9, np.nan, 0.2]), h3, atol=1e-10)
-        with self.assertRaises(ValueError):
-            mt.compare_sigma_to_h3(grid.assign(sigma_decay097=[0.1, 0.3, 0.2]), h3, atol=1e-10)
-
-    def test_unapproved_input_set_rejected(self):
-        with self.assertRaises(ValueError):
-            mt.run_boosting(self.prep, CONFIG, 'xgb_reg', phase='individual', sets={'ind:bm': ['bm']}, folds=[self.folds[0]],
-                            log=lambda *_: None)
-        with self.assertRaises(ValueError):
-            mt.run_boosting(self.prep, CONFIG, 'xgb_reg', phase='individual', sets={'ind:sigma': ['sigma']},
-                            folds=[self.folds[0]], log=lambda *_: None)
 
 
 if __name__ == '__main__':

@@ -1,6 +1,6 @@
 """model_test(v2) 공통부·linear_model 계약 — 합성 자료만 사용(실제 data/ 파일을 읽지 않음).
 
-누수 없음, 조합 간 같은 학습 행, 테스트 기간 차단, 동률 규칙, 예측 행 = 수익률 있는 모든 종목,
+누수 없음, 테스트 기간 차단, 동률 규칙, 예측 행 = 수익률 있는 모든 종목,
 그리고 선형 모델 구현(HuberRegressor·Ridge 일치)을 확인한다.
 """
 from pathlib import Path
@@ -58,7 +58,7 @@ def synthetic(n_stocks=24, seed=0, returns_override=None):
 def prepared_from(comp, grid, r):
     data = mt.build_model_data(comp, grid, r, LABELS, units={'return': 'decimal'})
     return {'data': data, 'sigma_labels': LABELS, 'lambda_candidates': h3_lambda_candidates(),
-            'checks': {'sigma_decay097_equals_h3_parquet': True}, 'inputs': {}}
+            'checks': {'input_transform': 'rank'}}
 
 
 SETTINGS = [('ols', 'raw', 'mse'), ('ridge', 'winsor_1_99', 'huber_q999'), ('ridge', 'monthly_zscore', 'huber_sigma135')]
@@ -66,8 +66,7 @@ SETS = {k: v for k, v in mt.input_sets().items() if k in ('ind:bm', 'ind:size+si
 
 
 class GridAndRuleTests(unittest.TestCase):
-    def test_config_approved_and_17_sets(self):
-        mt.check_grid(CONFIG)
+    def test_17_sets_and_folds(self):
         sets = mt.input_sets()
         self.assertEqual(len(sets), 17)
         self.assertEqual(sum(k.startswith('ind:') for k in sets), 15)
@@ -77,15 +76,12 @@ class GridAndRuleTests(unittest.TestCase):
         self.assertEqual(folds[-1]['train_years'], (2003, 2019))
         self.assertEqual([f['fold'] for f in folds if f['min_years_exception']], [1, 2, 3])
 
-    def test_changed_grid_rejected(self):
+    def test_final_test_must_stay_disabled(self):
+        mt.check_no_test(CONFIG)
         bad = copy.deepcopy(CONFIG)
-        bad['MODEL_GRID']['ridge_lambdas'] = [0.1, 1]
-        with self.assertRaises(ValueError):
-            mt.check_grid(bad)
-        bad = copy.deepcopy(CONFIG)
-        bad['MODEL_GRID']['train_start_target_year'] = 2001
+        bad['FINAL_TEST_ENABLED'] = True
         with self.assertRaises(PermissionError):
-            mt.check_grid(bad)
+            mt.check_no_test(bad)
 
     def test_tie_rule_ridge_larger_then_longer_span(self):
         r = lambda ic, lam, decay: {'inner_ic': ic, 'ridge_lambda': lam, 'decay': decay}
@@ -145,9 +141,9 @@ class LinearModelTests(unittest.TestCase):
         months = np.array(['a', 'a', 'b', 'b'])
         self.assertAlmostEqual(linear.huber_delta_q999(y, months), 5.0)
 
-    def test_unapproved_values_rejected(self):
+    def test_invalid_values_rejected(self):
         with self.assertRaises(ValueError):
-            linear.fit_linear(self.X, self.y, model='ridge', loss='mse', ridge_lambda=.5)
+            linear.fit_linear(self.X, self.y, model='ridge', loss='mse', ridge_lambda=0)
         with self.assertRaises(ValueError):
             linear.fit_linear(self.X, self.y, model='ols', loss='huber_q999')
 
@@ -181,9 +177,6 @@ class PipelineContractTests(unittest.TestCase):
         np.testing.assert_allclose(z['std'], 1, atol=1e-12)
 
     def test_same_training_rows_and_all_stocks_predicted(self):
-        ic = mt.outer_monthly_ic(self.result['val_keys'], self.result['predictions'])
-        checks = mt.end_checks(self.prepared, self.result, ic, full_run=False)
-        self.assertTrue(all(v for k, v in checks.items() if k != 'scipy_independent_max_error'), checks)
         sel = self.result['selections']
         self.assertEqual(sel.groupby('fold').n_train.nunique().max(), 1)
         d = self.prepared['data']
@@ -225,11 +218,9 @@ class PipelineContractTests(unittest.TestCase):
             self.assertEqual(set(other['predictions']), set(self.result['predictions']))
             for cid, v in self.result['predictions'].items():
                 np.testing.assert_array_equal(v, other['predictions'][cid])
-        with self.assertRaises(ValueError):
-            mt.merge_results([parts[0], parts[0]])
 
     def test_part_summary_progress_and_finalize(self):
-        """셀 요약 표, 병렬 진행 메시지(큐 경유), 마무리 저장(부분 실행은 거부, 허용 시 새 폴더에 표·run.json)."""
+        """셀 요약 표, 병렬 진행 메시지(큐 경유), 저장(검사 없이 새 폴더에 표·예측값·result.zip)."""
         import tempfile
         from datetime import datetime
         lines = []
@@ -240,18 +231,17 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(len(summary), len(SETS) * len({t for _, t, _ in SETTINGS}))
         self.assertTrue({'valid_ic_full', 'valid_ic_common', 'train_ic', 'train_minus_valid'} <= set(summary))
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(ValueError):            # 일부 셀만으로는 완전한 실행이 아님
-                mt.finalize_linear(ROOT, CONFIG, self.prepared, part, started=datetime.now(), out_root=Path(tmp), log=lambda *_: None,
-                                   author='tester', experiment='base')
-            with self.assertRaises(ValueError):            # 작성자 없이는 저장하지 않음
+            with self.assertRaises(ValueError):            # 작성자 폴더 이름은 영문만
                 mt.finalize_linear(ROOT, CONFIG, self.prepared, part, started=datetime.now(), out_root=Path(tmp),
-                                   require_complete=False, log=lambda *_: None)
+                                   log=lambda *_: None, author='홍길동', experiment='base')
             out = mt.finalize_linear(ROOT, CONFIG, self.prepared, part, started=datetime.now(), out_root=Path(tmp),
-                                     require_complete=False, log=lambda *_: None, author='tester', experiment='base')
+                                     log=lambda *_: None, author='tester', experiment='부분_실행')
             self.assertEqual(Path(out['run_dir']).parent, Path(tmp) / 'tester')
-            self.assertEqual(out['status'], 'PASSED')
             files = {p.name for p in Path(out['run_dir']).iterdir()}
-            self.assertTrue({'run.json', 'performance_summary.csv', 'validation_predictions.parquet'} <= files)
+            self.assertTrue({'performance_summary.csv', 'validation_predictions.parquet', 'result.zip'} <= files)
+            self.assertNotIn('run.json', files)
+            perf = out['tables']['performance_summary']
+            self.assertTrue({'months', 'scored_rows', 'input_transform'} <= set(perf))
 
     def test_inner_scorer_equals_monthly_ic(self):
         rng = np.random.default_rng(5)

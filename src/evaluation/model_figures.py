@@ -56,8 +56,10 @@ def _note(ax, text, y=-0.15):
 
 
 def _match(frame: pd.DataFrame, row) -> pd.Series:
-    return (frame.model.eq(row['model']) & frame.target.eq(row['target']) & frame.loss.eq(row['loss'])
-            & frame.hparams.eq(row['hparams']) & frame.input_set.eq(row['input_set']))
+    """같은 설정의 행. 같은 설정이 두 폴더에 있을 수 있어 출처 폴더(run)가 있으면 그것도 맞춘다(곡선 파일엔 run 칸 없음)."""
+    out = (frame.model.eq(row['model']) & frame.target.eq(row['target']) & frame.loss.eq(row['loss'])
+           & frame.hparams.eq(row['hparams']) & frame.input_set.eq(row['input_set']))
+    return out & frame.run.eq(row['run']) if 'run' in frame and 'run' in row else out
 
 
 def _boosting_best(loaded: dict) -> pd.DataFrame:
@@ -101,10 +103,10 @@ def learning_curve(loaded: dict, row, out_dir: Path, *, fold: int = 16) -> Path:
     return path
 
 
-def depth_chart(loaded: dict, model: str, out_dir: Path) -> Path:
-    """② 개별형 1등 목표·손실에서 깊이 1~4의 Fold 평균 학습 IC와 바깥 검증 IC."""
+def depth_chart(loaded: dict, model: str, out_dir: Path, *, experiment: str = 'base') -> Path:
+    """② 개별형 1등 목표·손실에서 깊이 1~4의 Fold 평균 학습 IC와 바깥 검증 IC(기본 실험만)."""
     p = loaded['performance']
-    p = p[p.scope.eq('full') & p.model.eq(model) & p.input_set.eq('ind:size+bm+mom+sigma')]
+    p = p[p.scope.eq('full') & p.model.eq(model) & p.input_set.eq('ind:size+bm+mom+sigma') & p.experiment.eq(experiment)]
     top = p.loc[p.mean_ic.idxmax()]
     p = p[p.target.eq(top.target) & p.loss.eq(top.loss)].copy()
     p['depth'] = p.hparams.str.extract(r'^d(\d+)_')[0].astype(int)
