@@ -1,29 +1,25 @@
-"""model_test 결과 모으기(보고용). 노트북에 적은 실행 폴더들의 저장 표만 읽어 비교 표를 만든다.
+"""model_test 결과 모으기(보고용). 결과 폴더의 저장 표만 읽어 비교 표를 만든다. 재계산·재학습 없음.
 
-- 계산 입력이 아니다: 재계산·재학습 없음. 폴더 경로는 호출하는 쪽이 넘긴다(outputs/run_id를 찾거나 전제하지 않음).
-- 읽는 것: 각 폴더의 run.json, performance_summary.csv, monthly_ic.csv, fold_table.csv(폴더에 없으면 result.zip 안에서).
-- 합치기 전에 검사: 모두 PASSED, 같은 공통 입력 해시·채점 행·Fold 계획·내부 검증 범위·평가 계약, 설정 ID 중복 없음, 192개월.
-- 팀 실험(2026-11-15): 결과 규격 outputs/model_results/<작성자>/<시각>_<실험>_<모델·단계>/. run.json의 author·experiment로 구분(없으면
-  '미기재'·'base'). 새 특징 파일은 같은 이름이면 같은 해시여야 함께 합친다. 학습 행 수는 실험마다 다를 수 있어 열로 보여 준다.
+- 읽는 것: 각 폴더의 performance_summary.csv, monthly_ic.csv, fold_table.csv(폴더에 없으면 result.zip 안에서).
+- 검사 없음(2026-11-15 결정 라): 같은 설정이 두 폴더에 있으면 둘 다 보여 주고(run = 출처 폴더), IC 개월 수는 months 칸으로 본다.
+- 작성자·실험은 폴더 이름에서 읽는다: <base>/<작성자>/<시각>_<실험>_<모델·단계>/ (실험 없는 예전 폴더는 'base').
 """
 from __future__ import annotations
 
-import json
+import re
 from pathlib import Path
 
 import pandas as pd
 
-# 결과를 서로 비교해도 되는지 판단하는 평가 계약(MODEL_GRID 일부). 모델 후보(학습률·깊이 등)는 실행마다 달라도 된다.
-CONTRACT_KEYS = ('train_start_target_year', 'first_validation_year', 'last_validation_year', 'inner_validation_years',
-                 'min_inner_train_years', 'min_inner_train_exceptions', 'training_rows', 'prediction_rows',
-                 'target_returns_unchanged', 'components', 'input_transform', 'h3_fixed', 'missing_feature_fill')
 MAIN_SETS = ('ind:size+bm+mom+sigma', 'ind:sigma', 'idx:h1', 'idx:h1+sigma')   # 주 결과 입력(부분집합 15개는 선형만)
 SET_LABELS = {'ind:size+bm+mom+sigma': '개별형 [Size, B/M, Mom, σ]', 'ind:sigma': '[σ]',
               'idx:h1': '지수형 [H1 지수]', 'idx:h1+sigma': '지수형 [H1 지수, σ]'}
 MODEL_ORDER = ('ols', 'ridge', 'xgb_reg', 'lgb_reg', 'xgb_pairwise', 'xgb_rankreg', 'lgb_rankreg')
-MONTHS = 192
 TABLES = ('performance_summary', 'monthly_ic', 'fold_table')
 RESULT_ZIP = 'result.zip'
+# 폴더 이름 끝의 모델·단계 꼬리표(model_test.finalize_linear·finalize_boosting이 붙임). 그 앞이 실험 이름.
+_SUFFIX = re.compile(r'(?:^|_)(linear|(?:xgb_reg|lgb_reg|xgb_pairwise|xgb_rankreg|lgb_rankreg)_(?:individual|index)'
+                     r'(?P<followup>_d\d+)?)(?:_resaved)?$')
 
 
 def read_member(folder, name: str) -> bytes:
@@ -58,98 +54,48 @@ def read_parquet(folder, name: str) -> pd.DataFrame:
     return pd.read_parquet(io.BytesIO(read_member(folder, name)))
 
 
-BASE_INPUTS = ('data/interim/panel.parquet', 'data/interim/eligibility.parquet', 'data/processed/h1_components.parquet',
-               'data/processed/h3.parquet')
-
-
-def find_run_folders(base_dir, *, log=print) -> list[Path]:
-    """결과 폴더 모으기(예: outputs/model_results). 규격 <base>/<작성자>/<결과 폴더>/run.json과, 작성자 폴더 없이 바로 아래에 둔
-    예전 결과 폴더를 함께 찾는다. PASSED만 돌려주고 나머지는 이유를 알리고 뺀다."""
+def find_run_folders(base_dir) -> list[Path]:
+    """결과 폴더 모으기(예: outputs/model_results): <base>/<작성자>/<결과 폴더>와 바로 아래 예전 폴더 중 performance_summary가
+    있는 것(풀린 파일 또는 result.zip 안)."""
     base = Path(base_dir)
-    marks = [*base.glob('*/run.json'), *base.glob('*/*/run.json'), *base.glob(f'*/{RESULT_ZIP}'), *base.glob(f'*/*/{RESULT_ZIP}')]
-    candidates = sorted({r.parent for r in marks})
-    out = []
-    for folder in candidates:
-        status = json.loads(read_member(folder, 'run.json').decode('utf-8')).get('status')
-        if status == 'PASSED':
-            out.append(folder)
-        else:
-            log(f'제외: {folder.name} ({status})')
-    return out
+    candidates = sorted({p for p in [*base.glob('*'), *base.glob('*/*')] if p.is_dir()})
+    return [f for f in candidates if has_member(f, 'performance_summary.csv')] if base.is_dir() else []
+
+
+def parse_folder(folder) -> dict:
+    """폴더 이름 → 작성자·실험·후속 튜닝 여부. 예: jiun/20261115T153602_h2_lgb_reg_index → jiun, h2, False."""
+    folder = Path(folder)
+    rest = re.sub(r'^\d{8}T\d{6}_?', '', folder.name)
+    m = _SUFFIX.search(rest)
+    experiment = rest[:m.start()] if m else rest
+    parent = folder.parent.name
+    return {'author': parent if parent not in ('', 'model_results', 'model_test', 'runs') else '미기재',
+            'experiment': experiment or 'base', 'followup': bool(m and m.group('followup'))}
 
 
 def load_runs(folders) -> dict:
-    """폴더 목록 → {'runs': 실행 요약 표, 'performance': ..., 'monthly_ic': ..., 'fold_table': ...}. 검사 실패 시 ValueError."""
+    """폴더 목록 → {'runs': 폴더 표, 'performance': ..., 'monthly_ic': ..., 'fold_table': ..., 'folders': {이름: 경로}}."""
     folders = [Path(f) for f in folders]
     if not folders:
         raise ValueError('no_run_folders')
-    records, tables = [], {t: [] for t in TABLES}
+    tables = {t: [] for t in TABLES}
+    meta = {}
     for folder in folders:
-        record = json.loads(read_member(folder, 'run.json').decode('utf-8'))
-        if record.get('status') != 'PASSED':
-            raise ValueError(f"run_not_passed:{folder.name}:{record.get('status')}")
-        records.append((folder, record))
+        meta[folder.name] = parse_folder(folder)
         for t in TABLES:
             frame = _csv(folder, f'{t}.csv')
             if 'hparams' not in frame:
                 frame.insert(frame.columns.get_loc('input_set') + 1, 'hparams', '')      # 선형은 초모수 열이 없다
             tables[t].append(frame.assign(hparams=frame.hparams.fillna(''), run=folder.name))
-    _check_same_basis(records)
-    meta = {f.name: {'author': r.get('author') or _author_from_folder(f), 'experiment': r.get('experiment') or 'base',
-                     'train_rows': r['input_checks'].get('training_rows_2003_2021'), 'followup': bool(r.get('followup', False))}
-            for f, r in records}
-    out = {t: pd.concat(v, ignore_index=True) for t, v in tables.items()}
-    for t in TABLES:
-        m = pd.DataFrame.from_dict(meta, orient='index')
-        out[t] = out[t].join(m, on='run')
-    perf = out['performance_summary']
-    ids = perf[perf.scope.eq('full')].assign(
-        cid=lambda d: d.author + '|' + d.experiment + '|' + d.model + '|' + d.target + '|' + d.loss + '|' + d.input_set + '|' + d.hparams)
-    dup = ids.cid[ids.cid.duplicated()]
-    if len(dup):
-        raise ValueError('config_in_two_runs:' + dup.iloc[0])
-    if not perf.months.eq(MONTHS).all():
-        raise ValueError('not_all_192_months')
+    m = pd.DataFrame.from_dict(meta, orient='index')
+    out = {t: pd.concat(v, ignore_index=True).join(m, on='run') for t, v in tables.items()}
+    perf = out.pop('performance_summary')
+    # 이 칸이 생기기 전 결과는 '미기록'(실험 이름으로 구분: base = 순위, base_zscore = z점수)
+    perf['input_transform'] = perf['input_transform'].fillna('미기록') if 'input_transform' in perf else '미기록'
     out['performance'] = perf
-    del out['performance_summary']
-    out['folders'] = {f.name: f for f, _ in records}            # 그림(curves.parquet)용
-    out['runs'] = pd.DataFrame([{
-        'run': f.name, 'author': meta[f.name]['author'], 'experiment': meta[f.name]['experiment'],
-        'train_rows_2003_2021': meta[f.name]['train_rows'], 'extra_features': ','.join(r.get('extra_features', {})),
-        'family': r['family'], 'kind': r.get('kind') or r['family'], 'phase': r.get('phase', ''),
-        'followup': bool(r.get('followup', False)), 'device': (r['device'] or {}).get('boosting', 'cpu') if isinstance(r['device'], dict) else 'cpu',
-        'gpu': (r['device'] or {}).get('gpu') if isinstance(r['device'], dict) else None, 'configs': r['configs'],
-        'commit': (r.get('commit') or '없음')[:7], 'computed_commit': (r.get('computed_commit') or r.get('commit') or '없음')[:7],
-        'constant_score_months': len(r.get('constant_score_months', [])), 'started': r['started'][:16], 'finished': r['finished'][:16]}
-        for f, r in records])
+    out['folders'] = {f.name: f for f in folders}               # 그림(curves.parquet)용
+    out['runs'] = m.rename_axis('run').reset_index()
     return out
-
-
-def _author_from_folder(folder: Path) -> str:
-    """run.json에 작성자가 없는 예전 결과: 규격 위치(<base>/<작성자>/<결과 폴더>)에 두었으면 상위 폴더 이름, 아니면 '미기재'."""
-    parent = folder.parent.name
-    return parent if parent and parent not in ('model_results', 'model_test', 'runs') else '미기재'
-
-
-def _check_same_basis(records) -> None:
-    base_folder, base = records[0]
-    seen = dict(base['input_sha256'])
-    for folder, r in records[1:]:
-        for key in BASE_INPUTS:                                  # 공통 입력 4개는 모두 같아야 한다
-            if r['input_sha256'].get(key) != base['input_sha256'].get(key):
-                raise ValueError(f'input_sha256_differs:{key}:{folder.name}')
-        for key, value in r['input_sha256'].items():            # 새 특징 파일은 같은 이름이면 같은 해시
-            if seen.setdefault(key, value) != value:
-                raise ValueError(f'feature_file_version_differs:{key}:{folder.name}')
-        for key in ('folds_plan', 'inner_scope'):
-            if r[key] != base[key]:
-                raise ValueError(f'{key}_differs:{folder.name}')
-        for key in ('validation_prediction_rows', 'sigma_decay097_equals_h3_parquet'):
-            if r['input_checks'].get(key) != base['input_checks'].get(key):
-                raise ValueError(f'input_check_{key}_differs:{folder.name}')
-        for key in CONTRACT_KEYS:
-            if r['model_grid'].get(key) != base['model_grid'].get(key):
-                raise ValueError(f'model_grid_{key}_differs:{folder.name}')
 
 
 def _order(frame: pd.DataFrame) -> pd.DataFrame:
@@ -157,8 +103,8 @@ def _order(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.assign(_o=frame.model.map(rank)).sort_values(['_o']).drop(columns='_o')
 
 
-COLUMNS = ['model', 'target', 'loss', 'hparams', 'input_set', 'mean_ic', 'icir', 'ic_positive_share', 'train_ic_fold_mean',
-           'train_minus_valid', 'mean_ic_2006~2010', 'mean_ic_2011~2021', 'mean_ic_2018~2021']
+COLUMNS = ['model', 'target', 'loss', 'hparams', 'input_set', 'input_transform', 'months', 'mean_ic', 'icir', 'ic_positive_share', 'train_ic_fold_mean',
+           'train_minus_valid', 'mean_ic_2006~2010', 'mean_ic_2011~2021', 'mean_ic_2018~2021', 'run']
 
 
 def _pick(loaded: dict, experiment) -> pd.DataFrame:
@@ -208,7 +154,7 @@ def all_settings(loaded: dict, *, scope: str = 'full', sets=MAIN_SETS, experimen
     """모든 설정(평균 IC 내림차순). 기본은 모든 실험, sets=None이면 모든 입력 조합."""
     p = _pick(loaded, experiment)
     p = p[p.scope.eq(scope) & (p.input_set.isin(sets) if sets is not None else True)]
-    return p.sort_values('mean_ic', ascending=False)[['author', 'experiment', 'train_rows'] + COLUMNS + ['followup']] \
+    return p.sort_values('mean_ic', ascending=False)[['author', 'experiment'] + COLUMNS + ['followup']] \
         .reset_index(drop=True)
 
 
@@ -224,7 +170,7 @@ def depth_table(loaded: dict, *, scope: str = 'full', input_set: str = 'ind:size
 
 def save_tables(loaded: dict, out_dir) -> dict:
     """비교 표를 out_dir(예: outputs/모델_v1)에 csv로 쓴다. 다시 실행하면 같은 이름의 표를 덮어쓴다(저장 표에서 다시 만들 수 있음).
-    sources.csv = 읽은 실행 폴더·커밋·장치 목록(어떤 결과로 만든 표인지)."""
+    sources.csv = 읽은 결과 폴더 목록(어떤 결과로 만든 표인지)."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     tables = {'sources': loaded['runs'], 'best_per_model': best_per_model(loaded),

@@ -17,8 +17,8 @@ num_iteration)와 같은 값). 학습 IC는 train_every(기본 10)트리마다, 
 누적값이 한 번에 예측한 값과 마지막 자리에서 다를 수 있다 — 학습 IC는 보고용이고 트리 수 선택에는 쓰지 않는다.
 IC 계산 함수는 호출하는 쪽이 넘긴다(이 모듈은 evaluation을 불러오지 않는다). 파일을 쓰지 않는다.
 
-팀 실험(2026-11-15): custom=True면 승인된 깊이·학습률 밖의 값도 받고(정수 깊이 ≥ 1, 학습률 > 0), overrides로 라이브러리
-설정(규제·추출 비율 등)을 덮어쓸 수 있다. 목적함수·장치·트리 수(1000)는 덮어쓸 수 없다. 기본 실행(custom=False)은 그대로.
+설정 검사 없음(2026-11-15 결정 마): 깊이·학습률은 아무 값이나 받고, overrides로 라이브러리 설정을 덮어쓴다. 목적함수·트리 수 등을
+덮어쓰면 곡선·트리 수 선택이 맞지 않을 수 있다(쓰는 사람 책임).
 """
 from __future__ import annotations
 
@@ -30,7 +30,6 @@ from typing import Callable, Mapping
 
 import numpy as np
 
-LIBRARIES = ('xgboost', 'lightgbm')
 DEPTHS = (1, 2, 3)
 # 후속 튜닝(2026-11-14 결정, 한 번만): 순위 정답 3종은 깊이 1→2→3에서 IC가 계속 올라 깊이 4를 추가로 시험한다.
 # 원래 설계(DEPTHS)와 섞지 않고 따로 실행·저장한다(config MODEL_GRID.boosting_followup_depths).
@@ -57,23 +56,6 @@ KINDS = {
 }
 
 
-def check_boosting_grid(grid: Mapping) -> None:
-    """config MODEL_GRID의 부스팅 부분이 이 모듈의 고정값과 같은지 확인한다."""
-    expected = {
-        'rank_models': ['pairwise', 'rank_regression'], 'rank_label': 'monthly_decile_0_9', 'rank_pairs': 'all',
-        'rank_regression_target': 'monthly_percentile', 'libraries': list(LIBRARIES),
-        'depths': list(DEPTHS), 'learning_rates': list(LEARNING_RATES), 'hyperparameter_reporting': 'all_candidates',
-        'max_trees': MAX_TREES, 'tree_count_selection': 'best_inner_validation_ic_over_all_trees',
-        'lightgbm_num_leaves': 'two_power_depth', 'min_hessian_in_leaf': MIN_HESSIAN, 'min_data_in_leaf': MIN_DATA_IN_LEAF,
-        'l2': 0, 'l1': 0, 'subsample': 1.0, 'colsample': 1.0, 'max_bin': MAX_BIN, 'boosting_h3_spans': list(H3_SPANS), 'device': dict(DEVICES),
-        'boosting_regression_losses': list(REGRESSION_LOSSES), 'boosting_regression_targets': list(REGRESSION_TARGETS),
-        'boosting_followup_depths': {k: list(v) for k, v in FOLLOWUP_DEPTHS.items()},
-    }
-    bad = [k for k, v in expected.items() if grid.get(k) != v]
-    if bad:
-        raise ValueError('boosting_grid_not_approved:' + ','.join(bad))
-
-
 def settings(kind: str, followup: bool = False) -> list[tuple]:
     """한 종류의 설정 목록 (kind, target, loss, depth, learning_rate). 회귀 12개, 순위 3개.
     followup=True면 후속 튜닝 설정만(FOLLOWUP_DEPTHS, 없는 종류는 빈 목록)."""
@@ -96,34 +78,17 @@ def hparam_tag(depth: int, learning_rate: float, overrides: Mapping | None = Non
     return tag
 
 
-FIXED_PARAMS = {'objective', 'device', 'device_type', 'tree_method', 'disable_default_eval_metric', 'metric', 'boosting',
-                'num_boost_round', 'n_estimators', 'num_iterations', 'max_depth', 'eta', 'learning_rate', 'num_leaves'}
-
-
 # ---------- 라이브러리 설정 ----------
 
-def _check_setting(kind, target, loss, depth, learning_rate, delta, custom: bool = False):
+def _check_setting(kind, loss, delta):
+    """계산에 꼭 필요한 것만: 알려진 종류, Huber면 δ."""
     if kind not in KINDS:
         raise ValueError('boosting_kind_unknown')
-    spec = KINDS[kind]
-    if target not in spec['targets'] or loss not in spec['losses']:
-        raise ValueError('boosting_target_or_loss_not_approved')
-    if custom:                                   # 팀 실험: 값의 모양만 확인
-        if isinstance(depth, bool) or int(depth) != depth or depth < 1 or not (math.isfinite(learning_rate) and learning_rate > 0):
-            raise ValueError('boosting_hyperparameter_invalid')
-    elif depth not in DEPTHS + FOLLOWUP_DEPTHS.get(kind, ()) or learning_rate not in LEARNING_RATES:
-        raise ValueError('boosting_hyperparameter_not_approved')
-    if loss.startswith('huber'):
-        if delta is None or not (math.isfinite(delta) and delta > 0):
-            raise ValueError('huber_delta_required')
-    elif delta is not None:
-        raise ValueError('non_huber_has_no_delta')
+    if loss.startswith('huber') and (delta is None or not (math.isfinite(delta) and delta > 0)):
+        raise ValueError('huber_delta_required')
 
 
 def _apply_overrides(p: dict, overrides: Mapping | None) -> dict:
-    bad = sorted(set(overrides or {}) & FIXED_PARAMS)
-    if bad:
-        raise ValueError('boosting_param_not_overridable:' + ','.join(bad))
     p.update(overrides or {})
     return p
 
@@ -185,7 +150,7 @@ def _check_label(kind, y):
 def fit_boosting(kind: str, X, y, months, *, target: str, loss: str, depth: int, learning_rate: float,
                  delta: float | None = None, inner_X=None, inner_months=None, inner_score: Callable,
                  train_score: Callable, train_every: int = 10, device: str = 'cpu', n_threads: int | None = None,
-                 verbose_every: int | None = None, log: Callable | None = None, custom: bool = False,
+                 verbose_every: int | None = None, log: Callable | None = None,
                  overrides: Mapping | None = None) -> dict:
     """학습 행(X, y)으로 1000트리를 학습하고 트리별 곡선과 고른 트리 수를 돌려준다.
 
@@ -193,7 +158,7 @@ def fit_boosting(kind: str, X, y, months, *, target: str, loss: str, depth: int,
     반환: booster, library, kind, inner_curve(길이 1000), train_curve(길이 1000/train_every, 트리 train_every·2·train_every…),
           best_trees, best_inner_ic, seconds, params(실제 설정 전체), device.
     """
-    _check_setting(kind, target, loss, depth, learning_rate, delta, custom)
+    _check_setting(kind, loss, delta)
     X = np.asarray(X, dtype=float)
     y = _check_label(kind, np.asarray(y, dtype=float).reshape(-1))
     if X.ndim != 2 or len(X) != len(y) or not len(y) or not (np.isfinite(X).all() and np.isfinite(y).all()):
@@ -293,8 +258,3 @@ def feature_gain(fitted: Mapping, n_features: int, n_trees: int | None = None) -
         return np.array([float(score.get(f'f{i}', 0.0)) for i in range(n_features)])
     return np.asarray(fitted['booster'].feature_importance(importance_type='gain', iteration=n), float)
 
-
-def library_versions() -> dict:
-    import lightgbm
-    import xgboost
-    return {'xgboost': xgboost.__version__, 'lightgbm': lightgbm.__version__}

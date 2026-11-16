@@ -1,6 +1,6 @@
 """model_test(v2) 공통부·linear_model 계약 — 합성 자료만 사용(실제 data/ 파일을 읽지 않음).
 
-누수 없음, 조합 간 같은 학습 행, 테스트 기간 차단, 동률 규칙, 예측 행 = 수익률 있는 모든 종목,
+누수 없음, 테스트 기간 차단, 동률 규칙, 예측 행 = 수익률 있는 모든 종목,
 그리고 선형 모델 구현(HuberRegressor·Ridge 일치)을 확인한다.
 """
 from pathlib import Path
@@ -56,36 +56,38 @@ def synthetic(n_stocks=24, seed=0, returns_override=None):
 
 
 def prepared_from(comp, grid, r):
+    """합성 입력. 지수형 입력(2003년~)도 함께 시험하므로 학습 행은 2003년부터(실제 기본 실험은 2001년부터, 지수형 없음)."""
     data = mt.build_model_data(comp, grid, r, LABELS, units={'return': 'decimal'})
+    data['base_train'] = data.train                                   # 지수 ①은 2001년부터의 행으로(H2 실험과 같은 구조)
+    for t in mt.TARGET_COLUMNS:
+        data['base_t_' + t] = data['t_' + t]
+    data['train'] = data.train & data.year.ge(mt.INDEX_FIRST_YEAR)
     return {'data': data, 'sigma_labels': LABELS, 'lambda_candidates': h3_lambda_candidates(),
-            'checks': {'sigma_decay097_equals_h3_parquet': True}, 'inputs': {}}
+            'checks': {'input_transform': 'rank'}}
 
 
 SETTINGS = [('ols', 'raw', 'mse'), ('ridge', 'winsor_1_99', 'huber_q999'), ('ridge', 'monthly_zscore', 'huber_sigma135')]
-SETS = {k: v for k, v in mt.input_sets().items() if k in ('ind:bm', 'ind:size+sigma', 'idx:h1+sigma')}
+SETS = {k: v for k, v in mt.input_sets(index=True).items() if k in ('ind:bm', 'ind:size+sigma', 'idx:h1+sigma')}
 
 
 class GridAndRuleTests(unittest.TestCase):
-    def test_config_approved_and_17_sets(self):
-        mt.check_grid(CONFIG)
-        sets = mt.input_sets()
-        self.assertEqual(len(sets), 17)
-        self.assertEqual(sum(k.startswith('ind:') for k in sets), 15)
+    def test_15_sets_and_folds(self):
+        sets = mt.input_sets()                                   # 개별형만(지수형 제외 2026-11-16)
+        self.assertEqual(len(sets), 15)
+        self.assertTrue(all(k.startswith('ind:') for k in sets))
+        self.assertEqual(len(mt.input_sets(index=True)), 17)
         folds = mt.plan_folds(CONFIG['MODEL_GRID'])
         self.assertEqual([f['valid_year'] for f in folds], list(range(2006, 2022)))
-        self.assertEqual(folds[0]['train_years'], (2003, 2004))
-        self.assertEqual(folds[-1]['train_years'], (2003, 2019))
-        self.assertEqual([f['fold'] for f in folds if f['min_years_exception']], [1, 2, 3])
+        self.assertEqual(folds[0]['train_years'], (2001, 2004))
+        self.assertEqual(folds[-1]['train_years'], (2001, 2019))
+        self.assertEqual([f['fold'] for f in folds if f['min_years_exception']], [1])
 
-    def test_changed_grid_rejected(self):
+    def test_final_test_must_stay_disabled(self):
+        mt.check_no_test(CONFIG)
         bad = copy.deepcopy(CONFIG)
-        bad['MODEL_GRID']['ridge_lambdas'] = [0.1, 1]
-        with self.assertRaises(ValueError):
-            mt.check_grid(bad)
-        bad = copy.deepcopy(CONFIG)
-        bad['MODEL_GRID']['train_start_target_year'] = 2001
+        bad['FINAL_TEST_ENABLED'] = True
         with self.assertRaises(PermissionError):
-            mt.check_grid(bad)
+            mt.check_no_test(bad)
 
     def test_tie_rule_ridge_larger_then_longer_span(self):
         r = lambda ic, lam, decay: {'inner_ic': ic, 'ridge_lambda': lam, 'decay': decay}
@@ -145,9 +147,9 @@ class LinearModelTests(unittest.TestCase):
         months = np.array(['a', 'a', 'b', 'b'])
         self.assertAlmostEqual(linear.huber_delta_q999(y, months), 5.0)
 
-    def test_unapproved_values_rejected(self):
+    def test_invalid_values_rejected(self):
         with self.assertRaises(ValueError):
-            linear.fit_linear(self.X, self.y, model='ridge', loss='mse', ridge_lambda=.5)
+            linear.fit_linear(self.X, self.y, model='ridge', loss='mse', ridge_lambda=0)
         with self.assertRaises(ValueError):
             linear.fit_linear(self.X, self.y, model='ols', loss='huber_q999')
 
@@ -173,17 +175,15 @@ class PipelineContractTests(unittest.TestCase):
     def test_training_rows_and_targets(self):
         d = self.prepared['data']
         expect = d.h1_available & d.y.notna() & np.isfinite(d.filter(like='x_sigma_').iloc[:, 0])
-        self.assertTrue(d.train.equals(expect))
+        self.assertTrue(d.base_train.equals(expect))                    # build_model_data의 학습 행(2001년부터)
+        self.assertTrue(d.train.equals(expect & d.year.ge(mt.INDEX_FIRST_YEAR)))
         for t in mt.TARGETS:
-            self.assertTrue(np.isfinite(d.loc[d.train, 't_' + t]).all() and d.loc[~d.train, 't_' + t].isna().all())
-        z = d[d.train].groupby('target_month').t_monthly_zscore.agg(['mean', 'std'])
+            self.assertTrue(np.isfinite(d.loc[d.base_train, 't_' + t]).all() and d.loc[~d.base_train, 't_' + t].isna().all())
+        z = d[d.base_train].groupby('target_month').t_monthly_zscore.agg(['mean', 'std'])
         np.testing.assert_allclose(z['mean'], 0, atol=1e-12)
         np.testing.assert_allclose(z['std'], 1, atol=1e-12)
 
     def test_same_training_rows_and_all_stocks_predicted(self):
-        ic = mt.outer_monthly_ic(self.result['val_keys'], self.result['predictions'])
-        checks = mt.end_checks(self.prepared, self.result, ic, full_run=False)
-        self.assertTrue(all(v for k, v in checks.items() if k != 'scipy_independent_max_error'), checks)
         sel = self.result['selections']
         self.assertEqual(sel.groupby('fold').n_train.nunique().max(), 1)
         d = self.prepared['data']
@@ -225,11 +225,9 @@ class PipelineContractTests(unittest.TestCase):
             self.assertEqual(set(other['predictions']), set(self.result['predictions']))
             for cid, v in self.result['predictions'].items():
                 np.testing.assert_array_equal(v, other['predictions'][cid])
-        with self.assertRaises(ValueError):
-            mt.merge_results([parts[0], parts[0]])
 
     def test_part_summary_progress_and_finalize(self):
-        """셀 요약 표, 병렬 진행 메시지(큐 경유), 마무리 저장(부분 실행은 거부, 허용 시 새 폴더에 표·run.json)."""
+        """셀 요약 표, 병렬 진행 메시지(큐 경유), 저장(검사 없이 새 폴더에 표·예측값·result.zip)."""
         import tempfile
         from datetime import datetime
         lines = []
@@ -240,18 +238,17 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(len(summary), len(SETS) * len({t for _, t, _ in SETTINGS}))
         self.assertTrue({'valid_ic_full', 'valid_ic_common', 'train_ic', 'train_minus_valid'} <= set(summary))
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(ValueError):            # 일부 셀만으로는 완전한 실행이 아님
-                mt.finalize_linear(ROOT, CONFIG, self.prepared, part, started=datetime.now(), out_root=Path(tmp), log=lambda *_: None,
-                                   author='tester', experiment='base')
-            with self.assertRaises(ValueError):            # 작성자 없이는 저장하지 않음
+            with self.assertRaises(ValueError):            # 작성자 폴더 이름은 영문만
                 mt.finalize_linear(ROOT, CONFIG, self.prepared, part, started=datetime.now(), out_root=Path(tmp),
-                                   require_complete=False, log=lambda *_: None)
+                                   log=lambda *_: None, author='홍길동', experiment='base')
             out = mt.finalize_linear(ROOT, CONFIG, self.prepared, part, started=datetime.now(), out_root=Path(tmp),
-                                     require_complete=False, log=lambda *_: None, author='tester', experiment='base')
+                                     log=lambda *_: None, author='tester', experiment='부분_실행')
             self.assertEqual(Path(out['run_dir']).parent, Path(tmp) / 'tester')
-            self.assertEqual(out['status'], 'PASSED')
             files = {p.name for p in Path(out['run_dir']).iterdir()}
-            self.assertTrue({'run.json', 'performance_summary.csv', 'validation_predictions.parquet'} <= files)
+            self.assertTrue({'performance_summary.csv', 'validation_predictions.parquet', 'result.zip'} <= files)
+            self.assertNotIn('run.json', files)
+            perf = out['tables']['performance_summary']
+            self.assertTrue({'months', 'scored_rows', 'input_transform'} <= set(perf))
 
     def test_inner_scorer_equals_monthly_ic(self):
         rng = np.random.default_rng(5)
@@ -262,6 +259,12 @@ class PipelineContractTests(unittest.TestCase):
         for _ in range(5):
             s = np.round(rng.normal(size=len(m)), 1)
             self.assertEqual(sc.score(s)[0], mt.mean_ic(mt.monthly_ic(m, s, y)))
+
+    def test_index_inputs_rejected_with_training_before_2003(self):
+        data = mt.build_model_data(*synthetic(), LABELS, units={'return': 'decimal'})       # 학습 2001년부터
+        prep = {'data': data, 'sigma_labels': LABELS, 'lambda_candidates': h3_lambda_candidates(), 'checks': {}}
+        with self.assertRaises(ValueError):
+            mt.run_linear(prep, CONFIG, folds=self.folds[:1], settings=SETTINGS[:1], sets={'idx:h1': ['h1_index']}, log=lambda *_: None)
 
     def test_index_stage1_uses_prior_years_only(self):
         s1 = self.result['stage1']

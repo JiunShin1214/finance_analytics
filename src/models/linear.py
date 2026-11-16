@@ -10,7 +10,8 @@
                           alpha=0)를 맞춘 척도 추정값 [LWZ Table A.2, scikit-learn 기본값].
     HuberRegressor의 목적함수 Σ σ·H_ε(r/σ)는 σ를 고정하면 (1/σ)·Σ ρ_{εσ}(r)이라, OLS Huber②의 계수는 위 직접 구현에
     δ = 1.35σ를 넣은 것과 같다(check_huber_regressor_agreement). Ridge Huber②도 같은 δ에 같은 L2 벌점을 건다.
-입력은 이미 매달 순위 [−1, 1]이라 추가 표준화를 하지 않는다(ridge_input_standardize: false).
+입력은 이미 매달 변환되어 있어(기본 z점수, 2026-11-16 튜닝 7 결정 / 이전 순위 [−1, 1]) 추가 표준화를 하지 않는다
+(ridge_input_standardize: false).
 난수 없음. 결과는 계수·절편과 진단값(dict)만 돌려주고 파일을 쓰지 않는다.
 """
 from __future__ import annotations
@@ -25,17 +26,6 @@ LOSSES = ('mse', 'huber_q999', 'huber_sigma135')
 RIDGE_LAMBDAS = (0.0001, 0.001, 0.01, 0.1, 1.0, 10.0)
 HUBER_QUANTILE = 0.999
 HUBER_EPSILON = 1.35
-
-
-def check_linear_grid(grid: Mapping) -> None:
-    """config MODEL_GRID의 선형 부분이 이 모듈의 고정값과 같은지 확인한다."""
-    if (tuple(grid.get('linear_models', ())) != LINEAR_MODELS
-            or tuple(grid.get('regression_losses', ())) != LOSSES
-            or tuple(float(x) for x in grid.get('ridge_lambdas', ())) != RIDGE_LAMBDAS
-            or float(grid.get('huber_q999_quantile', -1)) != HUBER_QUANTILE
-            or float(grid.get('huber_sigma_epsilon', -1)) != HUBER_EPSILON
-            or grid.get('ridge_input_standardize') is not False):
-        raise ValueError('linear_model_grid_not_approved')
 
 
 def _arrays(X, y):
@@ -146,8 +136,21 @@ def fit_linear(X, y, *, model: str, loss: str, ridge_lambda: float | None = None
 
     Huber 손실은 delta를 호출부가 준다(①은 huber_delta_q999, ②는 huber_sigma_sklearn(...)['delta']).
     start=(절편, 계수)를 주면 Huber 반복을 그 점에서 시작한다(속도용, 볼록 문제라 같은 최적점). 없으면 같은 λ의 MSE 해에서 시작.
+
+    학습 행에서 값이 전부 0인 열은 빼고 맞춘 뒤 계수 0을 넣는다(2026-11-15 결정: 정보가 없어 어떤 계수든 예측이 같고, OLS·MSE의
+    최소 노름 해와 같은 뜻. Huber 뉴턴법은 그 열 때문에 행렬을 뒤집지 못함). 예: H2 지수 ① 2004년의 policy×debt(2002년 7~12월
+    정책 점수가 매달 0). 순위 입력(H1·H3)에는 이런 열이 없어 기존 결과와 무관하다.
     """
     X, y = _arrays(X, y)
+    zero = np.all(X == 0, axis=0)
+    if zero.any():
+        keep = ~zero
+        if start is not None:
+            start = (start[0], np.asarray(start[1], float)[keep])
+        fitted = fit_linear(X[:, keep], y, model=model, loss=loss, ridge_lambda=ridge_lambda, delta=delta, start=start)
+        coef = np.zeros(X.shape[1])
+        coef[keep] = fitted['coef']
+        return {**fitted, 'coef': coef, 'zero_columns': [int(i) for i in np.flatnonzero(zero)]}
     if model not in LINEAR_MODELS or loss not in LOSSES:
         raise ValueError('linear_model_or_loss_unknown')
     if model == 'ols':
@@ -155,8 +158,8 @@ def fit_linear(X, y, *, model: str, loss: str, ridge_lambda: float | None = None
             raise ValueError('ols_has_no_lambda')
         lam = 0.0
     else:
-        if ridge_lambda is None or float(ridge_lambda) not in RIDGE_LAMBDAS:
-            raise ValueError('ridge_lambda_not_approved')
+        if ridge_lambda is None or not float(ridge_lambda) > 0:      # 승인 목록 검사는 뺌(2026-11-15 결정 마) — 튜닝 6번 λ 100·1000
+            raise ValueError('ridge_lambda_must_be_positive')
         lam = float(ridge_lambda)
     if loss != 'mse':
         if delta is None or not (math.isfinite(delta) and delta > 0):

@@ -1,5 +1,4 @@
-"""팀 실험 통로(2026-11-15): 새 특징 파일, 실험용 부스팅 설정, 공통 저장(save_result), 작성자·실험 폴더 — 합성 자료만."""
-import json
+"""붙인 특징 파일, 자유 부스팅 설정·라이브러리 덮어쓰기, 저장 폴더 이름, result.zip — 합성 자료만."""
 import sys
 import tempfile
 import unittest
@@ -14,7 +13,6 @@ from test_model_test import CONFIG, prepared_from, synthetic  # noqa: E402
 
 from src.evaluation import model_summary as ms  # noqa: E402
 from src.evaluation import model_test as mt  # noqa: E402
-from src.models import boosting  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 QUIET = lambda *_: None  # noqa: E731
@@ -66,20 +64,15 @@ class FeatureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             data = self.prep['data']
-            dup = data[['stock_id', 'base_month']].head(1).assign(h2=1.0)
             test = pd.DataFrame({'stock_id': ['000010'], 'base_month': ['2021-12'], 'h2': [1.0]})
-            for extra, err in ((dup, ValueError), (test, PermissionError)):
-                rel = feature_file(root, data, extra_rows=extra)
-                with self.subTest(err=err), self.assertRaises(err):
-                    mt.load_extra_feature(root, 'h2', rel)
-            rel = feature_file(root, data)
-            for name, path, err in (('sigma', rel, ValueError), ('h2', '../h2.parquet', PermissionError),
-                                    ('x_bad', rel, ValueError)):
-                with self.subTest(name=name), self.assertRaises(err):
-                    mt.load_extra_feature(root, name, path)
+            rel = feature_file(root, data, extra_rows=test)
+            with self.assertRaises(PermissionError):                        # 테스트 기간 값
+                mt.load_extra_feature(root, 'h2', rel)
+            with self.assertRaises(PermissionError):                        # data/ 밖 파일
+                mt.load_extra_feature(root, 'h2', '../h2.parquet')
 
 
-class CustomBoostingTests(unittest.TestCase):
+class BoostingOptionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         prep = prepared_from(*synthetic())
@@ -88,78 +81,38 @@ class CustomBoostingTests(unittest.TestCase):
                     'lambda_candidates': cand[cand.label.isin(['span12', 'span36', 'span60'])].reset_index(drop=True)}
         cls.folds = mt.plan_folds(CONFIG['MODEL_GRID'])
 
-    def test_custom_settings_overrides_and_feature(self):
-        setting = ('lgb_rankreg', 'percentile', 'mse', 5, 0.05)            # 승인 밖 깊이·학습률
-        with self.assertRaises(ValueError):
-            mt.run_boosting(self.prep, CONFIG, 'lgb_rankreg', phase='individual', settings=[setting], folds=[self.folds[0]], log=QUIET)
-        with self.assertRaises(ValueError):                                 # 목적함수는 덮어쓸 수 없음
-            boosting.lgb_params('lgb_rankreg', 'mse', 3, 0.01, overrides={'objective': 'huber'})
+    def test_free_settings_overrides_feature_and_save(self):
+        setting = ('lgb_rankreg', 'percentile', 'mse', 5, 0.05)            # 기본 목록 밖 깊이·학습률도 그대로 받는다
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             rel = feature_file(root, self.prep['data'])
             prep = with_feature(self.prep, root, rel)
             name, cols = mt.make_input_set(['size', 'bm', 'mom', 'sigma', 'h2'])
             r = mt.run_boosting(prep, CONFIG, 'lgb_rankreg', phase='individual', settings=[setting], sets={name: cols},
-                                folds=[self.folds[0]], custom=True, overrides={'lambda_l2': 5.0}, n_threads=1, log=QUIET)
+                                folds=[self.folds[0]], overrides={'lambda_l2': 5.0}, n_threads=1, log=QUIET)
             self.assertEqual(set(r['selections'].hparams), {'d5_lr0.05_lambda_l25'})
             self.assertIn('gain_h2', r['selections'])
             p = next(iter(r['params'].values()))
             self.assertEqual((p['lambda_l2'], p['max_depth'], p['learning_rate']), (5.0, 5, 0.05))
             out = mt.finalize_boosting(ROOT, CONFIG, prep, r, started=datetime(2026, 1, 1), out_root=root / 'runs',
-                                       require_complete=True, log=QUIET, author='hong', experiment='h2_d5',
-                                       description='test', changes={'depths': [5]})
+                                       log=QUIET, author='hong', experiment='h2_d5')
             folder = Path(out['run_dir'])
             self.assertEqual((folder.parent.name, folder.name), ('hong', '20260101T000000_h2_d5_lgb_rankreg_individual'))
-            rec = json.loads((folder / 'run.json').read_text(encoding='utf-8'))
-            self.assertEqual((rec['author'], rec['experiment'], rec['custom'], rec['overrides']),
-                             ('hong', 'h2_d5', True, {'lambda_l2': 5.0}))
-            self.assertEqual(rec['extra_features'], {'h2': rel})
-            self.assertEqual(rec['input_sets'], {name: cols})
-            # Fold 1개라 행 수·192개월 검사만 실패하고 나머지는 통과해야 한다
-            self.assertEqual({k for k, v in out['checks'].items() if v is False}, {'validation_prediction_rows', 'all_192_months_ic'})
+            files = {f.name for f in folder.iterdir()}
+            self.assertTrue({'performance_summary.csv', 'curves.parquet', 'feature_coverage.csv', 'result.zip'} <= files)
+            self.assertEqual(ms.parse_folder(folder), {'author': 'hong', 'experiment': 'h2_d5', 'followup': False})
 
-    def test_default_run_unchanged_by_new_options(self):
-        setting = ('xgb_reg', 'monthly_zscore', 'mse', 1, 0.01)
-        r = mt.run_boosting(self.prep, CONFIG, 'xgb_reg', phase='individual', settings=[setting], folds=[self.folds[0]],
-                            device='cpu', n_threads=1, log=QUIET)
-        self.assertEqual(set(r['selections'].hparams), {'d1_lr0.01'})
-        self.assertEqual((r['custom'], r['overrides']), (False, {}))
-        with self.assertRaises(ValueError):                                 # 기본 단계에 새 조합은 custom 없이 거부
-            mt.run_boosting(self.prep, CONFIG, 'xgb_reg', phase='individual', settings=[setting],
-                            sets=dict([mt.make_input_set(['size', 'sigma'])]), folds=[self.folds[0]], device='cpu', log=QUIET)
-
-
-class SaveResultTests(unittest.TestCase):
-    def test_team_model_saved_in_same_format(self):
+    def test_folder_name_rules(self):
         prep = prepared_from(*synthetic())
-        val = mt.validation_rows(prep, CONFIG)
-        data = prep['data']
-        score = data.x_bm.to_numpy(float)[val.row.to_numpy()]
-        score = np.where(np.isfinite(score), score, 0.0)                    # 빈 특징은 0(결측 규칙)
-        folds = mt.plan_folds(CONFIG['MODEL_GRID'])
-        sel = pd.DataFrame([{'target': 'raw', 'loss': 'none', 'input_set': 'ind:bm', 'hparams': 'sign', 'fold': f['fold'],
-                             'valid_year': f['valid_year'], 'train_ic': 0.0, 'chosen_note': 'no tuning'} for f in folds])
         with tempfile.TemporaryDirectory() as tmp:
-            out = mt.save_result(ROOT, CONFIG, prep, model='bm_sign', predictions={('raw', 'none', 'ind:bm', 'sign'): score},
-                                 selections=sel, started=datetime(2026, 1, 2), author='kim', experiment='bm_only',
-                                 out_root=Path(tmp), log=QUIET)
-            folder = Path(out['run_dir'])
-            self.assertEqual((folder.parent.name, folder.name), ('kim', '20260102T000000_bm_only_bm_sign'))
-            self.assertEqual({k for k, v in out['checks'].items() if v is False}, {'validation_prediction_rows'})   # 합성 자료 행 수
-            rec = json.loads((folder / 'run.json').read_text(encoding='utf-8'))
-            self.assertEqual((rec['family'], rec['author'], rec['experiment']), ('custom', 'kim', 'bm_only'))
-        with self.assertRaises(ValueError):                                 # 예측 길이가 채점 행과 다르면 거부
-            mt.save_result(ROOT, CONFIG, prep, model='bad', predictions={('raw', 'none', 'ind:bm', 'sign'): score[:-1]},
-                           selections=sel, started=datetime(2026, 1, 2), author='kim', experiment='x', log=QUIET)
-        for author, experiment in (('a/b', 'x'), ('', 'x'), ('kim', None), ('kim', 'a b'), ('kim', '../x'), ('홍길동', 'x')):
-            with self.subTest(author=author, experiment=experiment), self.assertRaises(ValueError):   # 폴더 이름 규칙
-                mt.save_result(ROOT, CONFIG, prep, model='bm_sign', predictions={('raw', 'none', 'ind:bm', 'sign'): score},
-                               selections=sel, started=datetime(2026, 1, 2), author=author, experiment=experiment, log=QUIET)
-        with tempfile.TemporaryDirectory() as tmp:                          # 규격 폴더 찾기: <base>/<작성자>/<결과>
-            out = mt.save_result(ROOT, CONFIG, prep, model='bm_sign', predictions={('raw', 'none', 'ind:bm', 'sign'): score},
-                                 selections=sel, started=datetime(2026, 1, 3), author='kim', experiment='bm_only',
-                                 out_root=Path(tmp), log=QUIET)
-            self.assertEqual(ms.find_run_folders(Path(tmp), log=QUIET), [])          # 합성 자료라 FAILED → 제외
+            for author, experiment in (('a/b', 'x'), ('', 'x'), ('홍길동', 'x'), ('kim', ''), ('kim', '../x')):
+                with self.subTest(author=author, experiment=experiment), self.assertRaises(ValueError):
+                    mt.result_folder(ROOT, CONFIG, author=author, experiment=experiment, started=datetime(2026, 1, 2),
+                                     suffix='linear', out_root=Path(tmp))
+            folder = mt.result_folder(ROOT, CONFIG, author='kim', experiment='부채 실험', started=datetime(2026, 1, 2),
+                                      suffix='linear', out_root=Path(tmp))           # 실험 이름은 자유
+            self.assertTrue(folder.is_dir())
+        self.assertEqual(len(mt.validation_rows(prep, CONFIG)), int((prep['data'].predict & prep['data'].year.between(2006, 2021)).sum()))
 
 
 class ResultZipTests(unittest.TestCase):
@@ -168,21 +121,21 @@ class ResultZipTests(unittest.TestCase):
         from test_model_summary import make_run
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            a = make_run(root, 'a', mean_ic=0.08)
+            a = make_run(root, '20261114T000000_xgb_reg_individual', mean_ic=0.08)
             (a / 'validation_predictions.parquet').write_bytes(b'big')           # 예측값은 zip에 넣지 않는다
             z = mt.pack_result(a)
             names = zipfile.ZipFile(z).namelist()
-            self.assertIn('run.json', names)
+            self.assertIn('performance_summary.csv', names)
             self.assertNotIn('validation_predictions.parquet', names)
             first = z.read_bytes()
             self.assertEqual(mt.pack_result(a).read_bytes(), first)               # 같은 내용이면 같은 파일
             full = ms.load_runs([a])
-            only = root / 'only' / 'a'                                            # Git으로 받은 상태: zip만
+            only = root / 'only' / 'jiun' / a.name                                # Git으로 받은 상태: zip만
             only.mkdir(parents=True)
             (only / 'result.zip').write_bytes(first)
-            self.assertEqual(ms.find_run_folders(root / 'only', log=QUIET), [only])
+            self.assertEqual(ms.find_run_folders(root / 'only'), [only])
             got = ms.load_runs([only])
-            pd.testing.assert_frame_equal(full['performance'].drop(columns=['run', 'author']), got['performance'].drop(columns=['run', 'author']))   # 작성자는 run.json에 없으면 상위 폴더 이름
+            pd.testing.assert_frame_equal(full['performance'], got['performance'])
 
 
 class SummaryExperimentTests(unittest.TestCase):
@@ -190,11 +143,8 @@ class SummaryExperimentTests(unittest.TestCase):
         from test_model_summary import make_run
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            a = make_run(root, 'a', mean_ic=0.08)
-            b = make_run(root, 'b', mean_ic=0.09)
-            rec = json.loads((b / 'run.json').read_text(encoding='utf-8'))
-            rec.update(author='hong', experiment='h2')
-            (b / 'run.json').write_text(json.dumps(rec), encoding='utf-8')
+            a = make_run(root, '20261114T000000_xgb_reg_individual', mean_ic=0.08)
+            b = make_run(root, '20261115T000000_h2_xgb_reg_individual', author='hong', mean_ic=0.09)
             loaded = ms.load_runs([a, b])
             self.assertEqual(sorted(loaded['runs'].experiment), ['base', 'h2'])
             self.assertEqual(ms.best_per_model(loaded).mean_ic.tolist(), [0.08])   # 기본 표는 base 실험만
