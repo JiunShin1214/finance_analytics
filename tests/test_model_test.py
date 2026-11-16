@@ -56,7 +56,12 @@ def synthetic(n_stocks=24, seed=0, returns_override=None):
 
 
 def prepared_from(comp, grid, r):
+    """합성 입력. 지수형 입력(2003년~)도 함께 시험하므로 학습 행은 2003년부터(실제 기본 실험은 2001년부터, 지수형 없음)."""
     data = mt.build_model_data(comp, grid, r, LABELS, units={'return': 'decimal'})
+    data['base_train'] = data.train                                   # 지수 ①은 2001년부터의 행으로(H2 실험과 같은 구조)
+    for t in mt.TARGET_COLUMNS:
+        data['base_t_' + t] = data['t_' + t]
+    data['train'] = data.train & data.year.ge(mt.INDEX_FIRST_YEAR)
     return {'data': data, 'sigma_labels': LABELS, 'lambda_candidates': h3_lambda_candidates(),
             'checks': {'input_transform': 'rank'}}
 
@@ -72,9 +77,9 @@ class GridAndRuleTests(unittest.TestCase):
         self.assertEqual(sum(k.startswith('ind:') for k in sets), 15)
         folds = mt.plan_folds(CONFIG['MODEL_GRID'])
         self.assertEqual([f['valid_year'] for f in folds], list(range(2006, 2022)))
-        self.assertEqual(folds[0]['train_years'], (2003, 2004))
-        self.assertEqual(folds[-1]['train_years'], (2003, 2019))
-        self.assertEqual([f['fold'] for f in folds if f['min_years_exception']], [1, 2, 3])
+        self.assertEqual(folds[0]['train_years'], (2001, 2004))
+        self.assertEqual(folds[-1]['train_years'], (2001, 2019))
+        self.assertEqual([f['fold'] for f in folds if f['min_years_exception']], [1])
 
     def test_final_test_must_stay_disabled(self):
         mt.check_no_test(CONFIG)
@@ -169,10 +174,11 @@ class PipelineContractTests(unittest.TestCase):
     def test_training_rows_and_targets(self):
         d = self.prepared['data']
         expect = d.h1_available & d.y.notna() & np.isfinite(d.filter(like='x_sigma_').iloc[:, 0])
-        self.assertTrue(d.train.equals(expect))
+        self.assertTrue(d.base_train.equals(expect))                    # build_model_data의 학습 행(2001년부터)
+        self.assertTrue(d.train.equals(expect & d.year.ge(mt.INDEX_FIRST_YEAR)))
         for t in mt.TARGETS:
-            self.assertTrue(np.isfinite(d.loc[d.train, 't_' + t]).all() and d.loc[~d.train, 't_' + t].isna().all())
-        z = d[d.train].groupby('target_month').t_monthly_zscore.agg(['mean', 'std'])
+            self.assertTrue(np.isfinite(d.loc[d.base_train, 't_' + t]).all() and d.loc[~d.base_train, 't_' + t].isna().all())
+        z = d[d.base_train].groupby('target_month').t_monthly_zscore.agg(['mean', 'std'])
         np.testing.assert_allclose(z['mean'], 0, atol=1e-12)
         np.testing.assert_allclose(z['std'], 1, atol=1e-12)
 
@@ -252,6 +258,12 @@ class PipelineContractTests(unittest.TestCase):
         for _ in range(5):
             s = np.round(rng.normal(size=len(m)), 1)
             self.assertEqual(sc.score(s)[0], mt.mean_ic(mt.monthly_ic(m, s, y)))
+
+    def test_index_inputs_rejected_with_training_before_2003(self):
+        data = mt.build_model_data(*synthetic(), LABELS, units={'return': 'decimal'})       # 학습 2001년부터
+        prep = {'data': data, 'sigma_labels': LABELS, 'lambda_candidates': h3_lambda_candidates(), 'checks': {}}
+        with self.assertRaises(ValueError):
+            mt.run_linear(prep, CONFIG, folds=self.folds[:1], settings=SETTINGS[:1], sets={'idx:h1': ['h1_index']}, log=lambda *_: None)
 
     def test_index_stage1_uses_prior_years_only(self):
         s1 = self.result['stage1']

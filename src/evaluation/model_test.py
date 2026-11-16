@@ -5,7 +5,7 @@
 
 흐름
 1. prepare_inputs: λ 후보 10개의 σ(한 번에), 매달 변환 입력(순위 [−1, 1] 또는 z점수), 목표값 3종(그 달 학습 행 기준), 학습·예측 행.
-2. plan_folds: 학습 2003년 시작, 바깥 검증 2006~2021(16개), 내부 검증 = 학습 기간 마지막 1년, 재학습 없음.
+2. plan_folds: 학습 2001년 시작(config train_start_target_year, 2026-11-16 결정 — 지수형을 빼서 2003년일 이유가 없어짐), 바깥 검증 2006~2021(16개), 내부 검증 = 학습 기간 마지막 1년, 재학습 없음.
 3. h1_index: 지수형 ① — 각 해 Y의 H1 지수는 2001~Y−2로 학습·Y−1로 조정값을 고른 ①(②와 같은 모델·목표값·손실)의
    예측. 매달 순위 [−1, 1]로 바꿔 ②에 넣는다.
 4. run_linear: Fold × (모델·목표값·손실·입력 조합)마다 조정값(H3 λ × Ridge λ)을 내부 검증 평균 IC 최고 한 쌍으로 고르고
@@ -40,7 +40,8 @@ BOOSTING_SETS = ('ind:sigma', 'ind:size+bm+mom+sigma', 'idx:h1', 'idx:h1+sigma')
 BOOSTING_PHASES = {'individual': ('ind:size+bm+mom+sigma',), 'index': ('ind:sigma', 'idx:h1', 'idx:h1+sigma')}
 WINSOR_Q = (0.01, 0.99)
 BASE_FIRST, BASE_LAST = '2000-12', '2021-11'          # 목표월 2001-01~2021-12
-TRAIN_START, INDEX_TRAIN_START = 2003, 2001
+TRAIN_START, INDEX_TRAIN_START = 2001, 2001           # ② 학습 시작(config 기본값과 같음), 지수형 ① 학습 시작
+INDEX_FIRST_YEAR = INDEX_TRAIN_START + 2              # 지수형 ① 첫해: 학습 2001·검증 2002 → 2003(지수형은 H2 실험만 사용)
 PERIODS = {'2006~2010': (2006, 2010), '2011~2021': (2011, 2021), '2018~2021': (2018, 2021)}
 INNER_SCOPES = ('full', 'common')
 
@@ -268,9 +269,9 @@ def prepare_inputs(root: Path, config, *, h3_grid: pd.DataFrame | None = None, e
         data, coverage = add_extra_features(data, feats, transforms={n: s['transform'] for n, s in specs.items()},
                                             train_start_year=train_start_year)
     val = data[data.predict & data.year.between(2006, 2021)]
-    checks.update(validation_prediction_rows=int(len(val)),
-                  training_rows_2003_2021=int(data.train[data.year >= TRAIN_START].sum()),
-                  training_rows_2001_2021=int(data.train.sum()))
+    start = int(config['MODEL_GRID'].get('train_start_target_year', TRAIN_START))
+    checks.update(validation_prediction_rows=int(len(val)), train_start_target_year=start,
+                  training_rows=int(data.train[data.year >= start].sum()))
     if train_start_year is not None:
         checks['train_start_target_year'] = int(train_start_year)
     out = {'data': data, 'sigma_labels': labels, 'lambda_candidates': cand, 'checks': checks,
@@ -326,11 +327,13 @@ def index_specs(prepared: dict) -> dict:
 # ---------- 2) Fold ----------
 
 def plan_folds(grid) -> list[dict]:
-    """바깥 검증 Y마다 내부 학습 2003~Y−2, 내부 검증 Y−1. 재학습이 없으므로 바깥 검증 예측도 내부 학습 모델로 한다."""
+    """바깥 검증 Y마다 내부 학습 <학습 시작>~Y−2, 내부 검증 Y−1. 재학습이 없으므로 바깥 검증 예측도 내부 학습 모델로 한다.
+    학습 시작 = grid train_start_target_year(기본 2001)."""
+    start = int(grid.get('train_start_target_year', TRAIN_START))
     folds = []
     for k, y in enumerate(range(grid['first_validation_year'], grid['last_validation_year'] + 1), start=1):
-        inner_years = (y - 2) - TRAIN_START + 1
-        folds.append({'fold': k, 'valid_year': y, 'train_years': (TRAIN_START, y - 2), 'inner_valid_year': y - 1,
+        inner_years = (y - 2) - start + 1
+        folds.append({'fold': k, 'valid_year': y, 'train_years': (start, y - 2), 'inner_valid_year': y - 1,
                       'inner_train_years': inner_years, 'min_years_exception': inner_years < grid['min_inner_train_years']})
     if folds[-1]['valid_year'] >= 2022:
         raise PermissionError('folds_must_stay_inside_validation')
@@ -549,10 +552,17 @@ def _index_member(data: pd.DataFrame, name: str, parts: list[str]) -> np.ndarray
     return np.logical_and.reduce([data[p + '_available'].to_numpy(bool) for p in parts])
 
 
+def check_index_rows(data: pd.DataFrame, used: list) -> None:
+    """지수형 입력(①의 예측)은 2003년부터만 있다. 학습 행이 그보다 이르면(기본 2001 시작) 지수가 비어 학습할 수 없으므로
+    분명히 멈춘다. 지수형은 기본 실험에서 뺐고(2026-11-16) 학습이 2004년부터인 H2 실험에서만 쓴다."""
+    if used and data.train.any() and int(data.year[data.train].min()) < INDEX_FIRST_YEAR:
+        raise ValueError(f'index_inputs_need_training_from_{INDEX_FIRST_YEAR}:' + ','.join(used))
+
+
 def index_years(data: pd.DataFrame) -> range:
-    """① 지수를 만들 해: ② 학습 첫해(기본 2003, H2 실험 2004)~2021."""
-    first = int(data.year[data.train].min()) if data.train.any() else TRAIN_START
-    return range(max(TRAIN_START, first), 2022)
+    """① 지수를 만들 해: max(2003, ② 학습 첫해)~2021(H2 실험은 2004~). ①은 앞 두 해(학습·검증)가 필요해 2003년보다 빠를 수 없다."""
+    first = int(data.year[data.train].min()) if data.train.any() else INDEX_FIRST_YEAR
+    return range(max(INDEX_FIRST_YEAR, first), 2022)
 
 
 def _finish_index(raw: np.ndarray, data: pd.DataFrame, transform: str) -> np.ndarray:
@@ -597,7 +607,7 @@ def build_index(data, name: str, spec: dict, *, model, target, loss, inner_scope
     return _finish_index(raw_index, d, spec['transform']), pd.DataFrame(rows)
 
 
-def build_h1_index(data, *, model, target, loss, inner_scope, decay_of, years=range(TRAIN_START, 2022)):
+def build_h1_index(data, *, model, target, loss, inner_scope, decay_of, years=None):
     """지수형 ① H1 지수: Size·B/M·Mom → 매달 순위 [−1, 1]. 반환: (순위 지수 배열, 선택 표)."""
     return build_index(data, 'h1_index', {'parts': list(H1_PARTS), 'transform': 'rank'}, model=model, target=target, loss=loss,
                        inner_scope=inner_scope, decay_of=decay_of, years=years)
@@ -702,6 +712,7 @@ def run_linear(prepared: dict, config, *, inner_scope: str = 'common', folds: li
     stage1, timings, index_cols = [], [], {}
     specs = index_specs(prepared)
     used = [n for n in specs if any(n in cols for cols in sets.values())]
+    check_index_rows(data, used)
     if used:
         t_all = time.perf_counter()
         years = index_years(data)
@@ -970,7 +981,7 @@ def build_index_boosting(data, name: str, spec: dict, setting, *, inner_scope, d
 
 
 def build_h1_index_boosting(data, setting, *, inner_scope, decay_of, device='cpu', n_threads=None, log=None,
-                            years=range(TRAIN_START, 2022), overrides=None):
+                            years=None, overrides=None):
     """지수형 ① H1 지수(부스팅). 반환: (순위 지수 배열, 선택 표, 곡선 목록)."""
     return build_index_boosting(data, 'h1_index', {'parts': list(H1_PARTS), 'transform': 'rank'}, setting, inner_scope=inner_scope,
                                 decay_of=decay_of, device=device, n_threads=n_threads, log=log, years=years,
@@ -1099,6 +1110,7 @@ def run_boosting(prepared: dict, config, kind: str, *, phase: str, stage1: dict 
     val_keys, offsets = validation_keys(data, folds)
     index_cols, stage1_rows, curves, timings = {}, pd.DataFrame(), [], []
     used = [n for n in specs if any(n in cols for cols in sets.values())]
+    check_index_rows(data, used)
     if used:
         if stage1 is None:
             raise ValueError('stage1_result_required')
@@ -1204,7 +1216,7 @@ def estimate_boosting_minutes(prepared: dict, kind: str, seconds_by_fold: dict, 
     fits_per_fold = sum(len(boosting.H3_SPANS) if 'sigma' in all_sets[s] else 1 for s in sets)
     n_settings = len(boosting.settings(kind)) if n_settings is None else n_settings
     folds_sec = sum(per_fit(n_of(*f['train_years'])) * fits_per_fold for f in folds) * n_settings
-    stage1_sec = (sum(per_fit(n_of(INDEX_TRAIN_START, Y - 2)) for Y in range(TRAIN_START, 2022)) * n_settings
+    stage1_sec = (sum(per_fit(n_of(INDEX_TRAIN_START, Y - 2)) for Y in range(INDEX_FIRST_YEAR, 2022)) * n_settings
                   if any('h1_index' in all_sets[s] for s in sets) else 0.0)
     return {'kind': kind, 'settings': n_settings, 'fits_per_fold_setting': fits_per_fold,
             'folds_hours': folds_sec / 3600, 'stage1_hours': stage1_sec / 3600, 'total_hours': (folds_sec + stage1_sec) / 3600}
@@ -1463,7 +1475,7 @@ def run(root: Path, config, *, execute: bool = False, inner_scope: str = 'common
     t0 = time.perf_counter()
     prepared = prepare_inputs(root, config, input_transform=input_transform) if prepared is None else prepared
     log(f"입력 준비 {time.perf_counter() - t0:.0f}초: 검증 예측 행 {prepared['checks']['validation_prediction_rows']:,}, "
-        f"학습 행(2003~) {prepared['checks']['training_rows_2003_2021']:,}")
+        f"학습 행({prepared['checks']['train_start_target_year']}~) {prepared['checks']['training_rows']:,}")
     summary = {'stage': 'model_test', 'family': 'linear', 'execute': execute, 'inner_scope': inner_scope, 'workers': workers,
                'input_checks': prepared['checks'],
                'settings': len(linear_settings()), 'input_sets': len(input_sets()), 'folds': 16}

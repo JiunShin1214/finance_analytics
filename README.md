@@ -317,10 +317,18 @@ python -m src.pipeline --stage h1-mean-tests --execute
 
 `h1-mean-tests`는 공통 특징에서 고정된 10개 지수와 월별 순위 상관을 계산해 검정한다. 이전 PCA·검정 실행 폴더가 필요하지 않다. 공시 선택만 확인하려면 `python -m src.preprocessing.dart_extract`를 사용한다. 자기자본 전체를 재생성하는 명령(`equity_dating`, `equity_asof`)은 DataGuide 원본 등 해당 원천 입력도 사용하며 별도로 실행한다.
 
-## 12. 팀 실험과 결과 공유 (2026-11-15)
+## 12. 팀 실험과 결과 공유 (2026-11-16)
 
-- 공유: 코드·노트북·결과는 Git, 입력 `data/`만 Drive(내려받아 저장소 `data/`에 그대로 둔다).
-- Git 충돌을 막는 규칙: 공용 파일(`src/`의 기존 모듈, `notebook/`의 공용 노트북, `config/experiment.yaml`, `requirements.txt`)은 관리자만 고친다. 각자는 `notebook/<이름>/`, `src/team/<이름>/`에 새 파일만 만든다.
-- 공용 노트북(선형·부스팅) 결과는 `outputs/model_results/<이름>/<시각>_<실험>_<모델·단계>/`에 생긴다(`<이름>`은 영문·숫자·`_`·`-`, 실험 이름은 자유 — 한글이면 Mac에서 깨져 보일 수 있다). Git에는 실행마다 `result.zip`(표·곡선, 예측값 제외) 하나만 올라간다. 무엇을 돌렸는지는 표의 열(모델·목표값·손실·초모수·입력 조합·입력 변환)과 폴더 이름으로 보고, 코드는 Git 이력으로 본다.
-- 팀원 실험은 형식 제약이 없다: 각자 노트북에서 자유롭게 돌리고 "모델 / 하이퍼파라미터 / 조건 → 결과(평균 IC·ICIR 등)" 표를 `outputs/model_results/<이름>/`에 csv로 둔다. 필요하면 `prepare_inputs`, `plan_folds`·`fold_rows`, `validation_rows`, `monthly_ic`를 가져다 쓸 수 있다. 예시는 `notebook/model_test_experiment_example.ipynb`.
-- XGBoost는 GPU(Colab). Colab 결과는 내 드라이브 `model_results/<이름>/`에 저장한 뒤 내려받아 로컬 `outputs/model_results/<이름>/`에 넣고 커밋한다.
+모델·특징·하이퍼파라미터·학습 기간·노트북 형식은 자유다. 결과를 서로 비교할 수 있게 아래 네 가지만 지킨다.
+
+1. **테스트 자료 금지**: 2022~2025년 자료(`data/raw/test_2022_2025__*.csv`)는 열지 않는다. 개발 파일과 같은 폴더에 있으므로 `data/`를 폴더째 읽거나 검색·복사하지 않는다.
+2. **미래 정보 금지**: 어떤 해를 예측하는 모델은 그 전 해까지의 자료로만 학습하고 하이퍼파라미터를 고른다. 다음 달 수익률은 행을 당기지(`shift`) 말고 달력 기준 다음 달로 붙인다.
+3. **채점 통일**: 목표월 2006-01~2021-12의 192개월, 매달 다음 달 수익률이 있는 전 종목(133,876행). 특징이 비어도 행을 지우지 말고 채워서(예: 0) 예측한다. 점수는 매달 예측과 실제 수익률의 Spearman 순위 상관(IC) → 192개월 평균 IC, ICIR(평균 ÷ 표준편차). 채점 행과 순서는 `model_test.validation_rows`, 월별 IC는 `model_test.monthly_ic`로 얻을 수 있다.
+4. **결과 저장**: 결과 표(csv)를 `outputs/model_results/<이름>/` **바로 아래**에 둔다(`<이름>`은 영문). `outputs/`의 다른 위치나 더 깊은 폴더의 csv는 Git에 올라가지 않는다. 칸: 모델, 하이퍼파라미터, 조건(바꾼 것), 개월 수, 평균 IC, ICIR. 예측값처럼 큰 파일은 올리지 않는다.
+
+공유 방법
+- 코드·노트북·결과는 Git, 입력 `data/`만 Drive(내려받아 저장소 `data/`에 그대로 둔다).
+- Git 충돌을 막기 위해 공용 파일(`src/`의 기존 모듈, `notebook/`의 공용 노트북, `config/experiment.yaml`, `requirements.txt`)은 관리자만 고친다. 각자는 `notebook/<이름>/`, `src/team/<이름>/`에 새 파일만 만든다.
+- 예시: `notebook/model_test_experiment_example.ipynb`(복사해서 `notebook/<이름>/`에서 쓴다. 따를 필요는 없다).
+- XGBoost는 GPU(Colab). Colab 결과는 내 드라이브에 저장한 뒤 내려받아 로컬 `outputs/model_results/<이름>/`에 넣고 커밋한다.
+- 관리자 공용 노트북(선형·부스팅) 결과는 `outputs/model_results/<이름>/<시각>_<실험>_<모델·단계>/`에 생기고 Git에는 실행마다 `result.zip`(표·곡선, 예측값 제외)만 올라간다. 무엇을 돌렸는지는 표의 열과 폴더 이름, 코드는 Git 이력으로 본다.

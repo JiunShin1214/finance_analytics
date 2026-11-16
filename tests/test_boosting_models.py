@@ -111,8 +111,8 @@ class BoostingRunTests(unittest.TestCase):
 
     def test_rank_targets_within_training_rows(self):
         d = self.prep['data']
-        t = d[d.train]
-        self.assertTrue(d.loc[~d.train, ['t_decile', 't_percentile']].isna().all().all())
+        t = d[d.base_train]                                  # 목표값은 build_model_data의 학습 행(2001년~) 기준
+        self.assertTrue(d.loc[~d.base_train, ['t_decile', 't_percentile']].isna().all().all())
         for month, g in list(t.groupby('target_month'))[:30]:
             r = g.y.rank(method='average')
             np.testing.assert_array_equal(g.t_decile, np.floor(10 * (r - 1) / len(g)))
