@@ -51,6 +51,8 @@ credentials/
 !/outputs/model_results/**/result.zip
 # 팀원 결과 표(2026-11-15): 작성자 폴더 바로 아래 csv는 올린다(요약 표는 수 KB). 예측값 parquet는 제외 그대로.
 !/outputs/model_results/*/*.csv
+# jiun 결과는 당분간 커밋하지 않는다(2026-11-17, 결과가 너무 많아짐). 팀원 폴더 규칙은 그대로. 이미 커밋된 파일은 그대로 추적됨.
+/outputs/model_results/jiun/
 # 결과 비교 노트북은 관리자 개인용(공유 안 함, 2026-11-15)
 /notebook/model_test_summary.ipynb
 /outputs/데이터관측/
