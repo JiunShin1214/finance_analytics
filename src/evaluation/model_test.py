@@ -54,14 +54,16 @@ def check_no_test(config) -> None:
         raise PermissionError('final_test_must_stay_disabled')
 
 
-def input_sets() -> dict:
-    """서로 다른 입력 조합 17개: 개별형 15개 + 지수형 [H1 지수], [H1 지수, σ]. 지수형 [σ]는 개별형 [σ]와 같아 한 번만."""
+def input_sets(index: bool = False) -> dict:
+    """개별형 입력 조합 15개(Size·B/M·Mom·σ의 공집합 아닌 부분집합). 지수형은 2026-11-16 제외 — index=True면 예전
+    지수형 [H1 지수], [H1 지수, σ]를 더한 17개(학습이 2003년 이후일 때만 돌아감, check_index_rows)."""
     sets = {}
     for k in range(1, 5):
         for combo in itertools.combinations(COMPONENTS, k):
             sets['ind:' + '+'.join(combo)] = list(combo)
-    sets['idx:h1'] = ['h1_index']
-    sets['idx:h1+sigma'] = ['h1_index', 'sigma']
+    if index:
+        sets['idx:h1'] = ['h1_index']
+        sets['idx:h1+sigma'] = ['h1_index', 'sigma']
     return sets
 
 
@@ -856,7 +858,7 @@ def boosting_labels(prepared: dict) -> list[str]:
 
 def boosting_input_sets() -> dict:
     """부스팅 입력 4개(주 결과): [σ], [Size, B/M, Mom, σ], [H1 지수], [H1 지수, σ]. 부분집합 비교군은 선형에서만."""
-    sets = input_sets()
+    sets = input_sets(index=True)
     return {k: sets[k] for k in BOOSTING_SETS}
 
 
@@ -1212,7 +1214,7 @@ def estimate_boosting_minutes(prepared: dict, kind: str, seconds_by_fold: dict, 
     n_of = lambda lo, hi: int((train & (year >= lo) & (year <= hi)).sum())
     n_a, n_b = (n_of(*next(f for f in folds if f['fold'] == k)['train_years']) for k in (f_a, f_b))
     per_fit = lambda n: s_a + (n - n_a) / (n_b - n_a) * (s_b - s_a)
-    all_sets = input_sets()
+    all_sets = input_sets(index=True)
     fits_per_fold = sum(len(boosting.H3_SPANS) if 'sigma' in all_sets[s] else 1 for s in sets)
     n_settings = len(boosting.settings(kind)) if n_settings is None else n_settings
     folds_sec = sum(per_fit(n_of(*f['train_years'])) * fits_per_fold for f in folds) * n_settings

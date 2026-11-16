@@ -67,14 +67,15 @@ def prepared_from(comp, grid, r):
 
 
 SETTINGS = [('ols', 'raw', 'mse'), ('ridge', 'winsor_1_99', 'huber_q999'), ('ridge', 'monthly_zscore', 'huber_sigma135')]
-SETS = {k: v for k, v in mt.input_sets().items() if k in ('ind:bm', 'ind:size+sigma', 'idx:h1+sigma')}
+SETS = {k: v for k, v in mt.input_sets(index=True).items() if k in ('ind:bm', 'ind:size+sigma', 'idx:h1+sigma')}
 
 
 class GridAndRuleTests(unittest.TestCase):
-    def test_17_sets_and_folds(self):
-        sets = mt.input_sets()
-        self.assertEqual(len(sets), 17)
-        self.assertEqual(sum(k.startswith('ind:') for k in sets), 15)
+    def test_15_sets_and_folds(self):
+        sets = mt.input_sets()                                   # 개별형만(지수형 제외 2026-11-16)
+        self.assertEqual(len(sets), 15)
+        self.assertTrue(all(k.startswith('ind:') for k in sets))
+        self.assertEqual(len(mt.input_sets(index=True)), 17)
         folds = mt.plan_folds(CONFIG['MODEL_GRID'])
         self.assertEqual([f['valid_year'] for f in folds], list(range(2006, 2022)))
         self.assertEqual(folds[0]['train_years'], (2001, 2004))
