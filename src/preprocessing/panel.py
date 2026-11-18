@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Sequence
+import re
 if TYPE_CHECKING:
     from pandas import DataFrame
 
@@ -12,19 +13,27 @@ if TYPE_CHECKING:
 def normalize_stock_id(values: Sequence[str]) -> Sequence[str]:
     """종목코드 문자열 열 -> 앞자리 0 보존 6자리 문자열 열을 반환한다.
 
-    TODO: 형식/길이 검사. 숫자형으로 이미 소실된 식별자를 임의 복구하지 않음.
-    오류: DART 8자리 번호 혼용, 비숫자 문자, 코드 재사용의 무근거 치환.
+    문자 포함 코드를 보존하며 숫자형으로 소실된 식별자를 복구하지 않는다.
+    표시용 이름이나 DART 8자리 번호를 종목코드로 대체하지 않는다.
     """
-    raise NotImplementedError
+    result = list(values)
+    if any(not isinstance(v, str) or len(v) != 6 or v.strip() != v
+           or not v.isalnum() for v in result):
+        raise ValueError("stock_id must be a six-character alphanumeric string")
+    return result
 
 
 def normalize_month(values: Sequence[str]) -> Sequence[str]:
     """월 문자열 열 -> 달력상 유효 YYYY-MM 열을 반환한다.
 
-    TODO: 명시된 날짜 형식만 변환, 시간대는 Asia/Seoul. 불명/불가능 월 거부.
-    월별 시계열 공백을 행 순서로 압축하지 않는다.
+    YYYY-MM 문자열을 그대로 보존한다. 월 누락/순서 검사는 입력 계약에서 한다.
     """
-    raise NotImplementedError
+    result = list(values)
+    if any(not isinstance(v, str)
+           or re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", v) is None
+           or v.startswith("0000-") for v in result):
+        raise ValueError("month must be a valid YYYY-MM calendar month")
+    return result
 
 
 def distinguish_zero_vs_missing(table: DataFrame, *, status_columns: Sequence[str]) -> DataFrame:
@@ -39,32 +48,50 @@ def distinguish_zero_vs_missing(table: DataFrame, *, status_columns: Sequence[st
 def enforce_unique_stock_month(table: DataFrame, *, month_column: str) -> None:
     """표/관측월 또는 기준월 열명 -> 유일성 확인한다.
 
-    TODO: stock_id와 month_column의 존재·널 여부를 확인하고,
-    (stock_id, month_column) 조합의 유일성을 검사한다.
-    월 열은 관측월·기준월·목표월 중 호출자가 지정한 열을 사용한다.
-    중복 행을 임의 삭제하지 않고 중복 키·건수·영향 범위를 기록한다.
-    필수 열 누락, 널 키 또는 중복 키가 있으면 후속 처리를 중단한다.
+    관측월/기준월/목표월은 호출자가 지정한다. 중복을 자동 삭제하지 않는다.
     """
-    raise NotImplementedError
+    keys = ["stock_id", month_column]
+    if not table.columns.is_unique or not set(keys).issubset(table.columns):
+        raise ValueError("missing or duplicated stock/month columns")
+    if table[keys].isna().any().any() or table.duplicated(keys).any():
+        raise ValueError("null or duplicate stock/month keys")
 
 
 def attach_target_month(features: DataFrame) -> DataFrame:
-    """stock_id/base_month 특징표 -> target_month=t+1 달력월 추가 표를 반환한다.
-
-    TODO: 2000-12 -> 2001-01 및 연도 경계 검사. 행 shift 금지.
-    미래 y를 읽거나 특징 유효 종목을 목표 관측 여부로 걸러내지 않는다.
-    오류: 비정상 월·중복 기준월 키.
-    """
-    raise NotImplementedError
+    """다음 달력월을 붙인다. 개발 목표월 밖의 행은 자동 삭제하지 않고 차단한다."""
+    import pandas as pd
+    enforce_unique_stock_month(features, month_column="base_month")
+    normalize_stock_id(features.stock_id.tolist())
+    normalize_month(features.base_month.tolist())
+    target = (pd.PeriodIndex(features.base_month, freq="M") + 1).astype(str)
+    if not pd.Series(target).between("2001-01", "2021-12").all():
+        raise PermissionError("training_target_month_only: 2001-01..2021-12")
+    if "target_month" in features and not (features.target_month.to_numpy() == target).all():
+        raise ValueError("target_must_be_next_calendar_month")
+    out = features.copy()
+    out["target_month"] = target
+    return out
 
 
 def join_training_targets(features: DataFrame, returns: DataFrame) -> DataFrame:
-    """특징표와 허용된 Train 수익률표 -> 목표 y/별도 제외사유 표를 반환한다.
-
-    TODO: (stock_id,target_month)=(stock_id,관측월) 1:1 연결.
-    특징 산출과 월별 Z-score 계산이 끝난 후 특징표 기준으로 y를 결합한다.
-    y가 없는 특징행도 보존하고 목표 결측 사유와 특징 결측 사유를 분리한다.
-    제외 여부는 이후 공통 유효 표본 구성 단계에서 결정한다.
-    오류: Test/미확인 범위, 중복 목표 키, t와 t+1 불일치 -> 중단.
-    """
-    raise NotImplementedError
+    """완성된 특징에 제공 개발 수익률을 키로 왼쪽 결합. 결측 목표 행도 보존한다."""
+    import numpy as np
+    import pandas as pd
+    out = attach_target_month(features)
+    enforce_unique_stock_month(returns, month_column="month")
+    normalize_stock_id(returns.stock_id.tolist())
+    normalize_month(returns.month.tolist())
+    if not returns.month.between("2000-01", "2021-12").all():
+        raise PermissionError("development_returns_only")
+    if returns.attrs.get("units", {}).get("return") != "decimal":
+        raise ValueError("return_unit_must_be_decimal")
+    if "y" in out:
+        raise ValueError("target_already_attached")
+    if not pd.api.types.is_numeric_dtype(returns["return"]):
+        raise ValueError("return_must_be_numeric")
+    y = returns[["stock_id", "month", "return"]].rename(columns={"month":"target_month", "return":"y"})
+    out = out.merge(y, on=["stock_id", "target_month"], how="left", validate="one_to_one")
+    if (out.y.notna() & (~np.isfinite(out.y) | out.y.lt(-1))).any():
+        raise ValueError("invalid_target_return")
+    out["target_exclusion_reason"] = np.where(out.y.isna(), "target_missing", "")
+    return out

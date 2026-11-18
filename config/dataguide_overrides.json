@@ -1,0 +1,1906 @@
+[
+  {
+    "id": "DG-0001",
+    "type": "corp_map",
+    "stock_code": "005770",
+    "dataguide_name": "(주)광주은행",
+    "set": {
+      "corp_code": "00104078"
+    },
+    "dart_corp_name": "광주은행",
+    "status": "approved",
+    "basis": "amount",
+    "note": "DART 목록에 종목코드 없음. 그 시기 같은 이름 DART 회사 중 이 회사의 원문에 DataGuide와 같은 금액이 있음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20020401000449",
+          "report_name": "[첨부추가]사업보고서 (2001.12)",
+          "rcept_dt": "20020401",
+          "dataguide_item": "sep",
+          "dataguide_value": 191393232000.0,
+          "dart_value": "191393000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2001-12-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20020401000449_document_ae5dbbae6d47436db9768a0f7621750d-7778.zip",
+          "sha256": "9ab8a0561557605dfa0911c092da5c4980d85bfe33525ee6a0be9b022ff44dd2",
+          "location": "TABLE[90]/ROW[28]"
+        },
+        {
+          "receipt_id": "20020401000449",
+          "report_name": "[첨부추가]사업보고서 (2001.12)",
+          "rcept_dt": "20020401",
+          "dataguide_item": "cons",
+          "dataguide_value": 191393232000.0,
+          "dart_value": "191393000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2001-12-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20020401000449_document_ae5dbbae6d47436db9768a0f7621750d-7778.zip",
+          "sha256": "9ab8a0561557605dfa0911c092da5c4980d85bfe33525ee6a0be9b022ff44dd2",
+          "location": "TABLE[90]/ROW[28]"
+        },
+        {
+          "receipt_id": "20020401000449",
+          "report_name": "[첨부추가]사업보고서 (2001.12)",
+          "rcept_dt": "20020401",
+          "dataguide_item": "owners",
+          "dataguide_value": 191393232000.0,
+          "dart_value": "191393000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2001-12-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20020401000449_document_ae5dbbae6d47436db9768a0f7621750d-7778.zip",
+          "sha256": "9ab8a0561557605dfa0911c092da5c4980d85bfe33525ee6a0be9b022ff44dd2",
+          "location": "TABLE[90]/ROW[28]"
+        },
+        {
+          "receipt_id": "20020515000201",
+          "report_name": "분기보고서 (2002.03)",
+          "rcept_dt": "20020515",
+          "dataguide_item": "sep",
+          "dataguide_value": 222955627000.0,
+          "dart_value": "222956000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2002-03-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20020515000201_document_ae5dbbae6d47436db9768a0f7621750d-8693.zip",
+          "sha256": "60a55a5183d06321adac698988e04d1822060a2d9f1f70463e9105077cca1640",
+          "location": "TABLE[90]/ROW[28]"
+        },
+        {
+          "receipt_id": "20020814000291",
+          "report_name": "반기보고서 (2002.06)",
+          "rcept_dt": "20020814",
+          "dataguide_item": "sep",
+          "dataguide_value": 230815139000.0,
+          "dart_value": "230815000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2002-06-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20020814000291_document_ae5dbbae6d47436db9768a0f7621750d-9701.zip",
+          "sha256": "78b386598f4c72e15bb233100290bc4322c88bca70aceafc460672384e053e80",
+          "location": "TABLE[91]/ROW[28]"
+        }
+      ]
+    },
+    "decided_by": "사용자 (B5 ③, Claude 조사)",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "DG-0002",
+    "type": "corp_map",
+    "stock_code": "006610",
+    "dataguide_name": "(주)경남은행",
+    "set": {
+      "corp_code": "00101363"
+    },
+    "dart_corp_name": "경남은행",
+    "status": "approved",
+    "basis": "amount",
+    "note": "DART 목록에 종목코드 없음. 그 시기 같은 이름 DART 회사 중 이 회사의 원문에 DataGuide와 같은 금액이 있음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20000513000069",
+          "report_name": "분기보고서 (2000.03)",
+          "rcept_dt": "20000513",
+          "dataguide_item": "sep",
+          "dataguide_value": 354838000000.0,
+          "dart_value": "354838000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2000-03-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20000513000069_document_ae5dbbae6d47436db9768a0f7621750d-722.zip",
+          "sha256": "3b98bf6afb62e2dbcbc5d4cdd1547955086d46850d8366dbca9d998c07c16af5",
+          "location": "TABLE[97]/ROW[29]"
+        },
+        {
+          "receipt_id": "20030814000239",
+          "report_name": "반기보고서 (2003.06)",
+          "rcept_dt": "20030814",
+          "dataguide_item": "sep",
+          "dataguide_value": 472963686000.0,
+          "dart_value": "472964000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2003-06-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20030814000239_document_ae5dbbae6d47436db9768a0f7621750d-13893.zip",
+          "sha256": "9526642cc27e5abbe62c7639af8050ab5e3f4137a67aace28c8337fb79988f2b",
+          "location": "TABLE[105]/ROW[16]"
+        },
+        {
+          "receipt_id": "20040330000111",
+          "report_name": "사업보고서 (2003.12)",
+          "rcept_dt": "20040330",
+          "dataguide_item": "sep",
+          "dataguide_value": 497173048000.0,
+          "dart_value": "497173000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2003-12-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20040330000111_document_ae5dbbae6d47436db9768a0f7621750d-16574.zip",
+          "sha256": "d5dd49a2f768dec398d29283a7778cdb2305dbeae08bf6a5492d24932f4db749",
+          "location": "TABLE[103]/ROW[16]"
+        },
+        {
+          "receipt_id": "20060515000114",
+          "report_name": "분기보고서 (2006.03)",
+          "rcept_dt": "20060515",
+          "dataguide_item": "sep",
+          "dataguide_value": 674449381000.0,
+          "dart_value": "674449000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2006-03-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20060515000114_document_a5cda2606a4840b1b5508cdcfbe4361f-10395.zip",
+          "sha256": "10e85ff08da5808167de971d31a7e16bb8329239d433214f4c97674a2a732bea",
+          "location": "TABLE[101]/ROW[16]"
+        },
+        {
+          "receipt_id": "20061114000011",
+          "report_name": "분기보고서 (2006.09)",
+          "rcept_dt": "20061114",
+          "dataguide_item": "sep",
+          "dataguide_value": 777057755000.0,
+          "dart_value": "777058000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2006-09-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20061114000011_document_a5cda2606a4840b1b5508cdcfbe4361f-12494.zip",
+          "sha256": "13dbd4a67d4e951ecc72e43ee97c259ce9d49902021e291da744d7181111a72f",
+          "location": "TABLE[101]/ROW[16]"
+        }
+      ]
+    },
+    "decided_by": "사용자 (B5 ③, Claude 조사)",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "DG-0003",
+    "type": "corp_map",
+    "stock_code": "018590",
+    "dataguide_name": "KNC",
+    "set": {
+      "corp_code": "00145561"
+    },
+    "dart_corp_name": "케이엔씨",
+    "status": "approved",
+    "basis": "amount",
+    "note": "DART 목록에 종목코드 없음. 그 시기 같은 이름 DART 회사 중 이 회사의 원문에 DataGuide와 같은 금액이 있음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20020514000303",
+          "report_name": "분기보고서 (2002.03)",
+          "rcept_dt": "20020514",
+          "dataguide_item": "sep",
+          "dataguide_value": 15613511000.0,
+          "dart_value": "15613511000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2002-03-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20020514000303_document_ae5dbbae6d47436db9768a0f7621750d-9164.zip",
+          "sha256": "9c250ce37c317f25034ccd9a526f38fbadd51d1a0aa7a11f5ad3b08d3ea97c29",
+          "location": "TABLE[79]/ROW[19]"
+        },
+        {
+          "receipt_id": "20020814000037",
+          "report_name": "반기보고서 (2002.06)",
+          "rcept_dt": "20020814",
+          "dataguide_item": "sep",
+          "dataguide_value": 16859033000.0,
+          "dart_value": "16859032000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2002-06-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20020814000037_document_ae5dbbae6d47436db9768a0f7621750d-10162.zip",
+          "sha256": "acb8123523a1d0b8ce45b57b808c74c74c167b3a87e5134234458e5cd2f4c340",
+          "location": "TABLE[79]/ROW[19]"
+        }
+      ]
+    },
+    "decided_by": "사용자 (B5 ③, Claude 조사)",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "DG-0004",
+    "type": "corp_map",
+    "stock_code": "007420",
+    "dataguide_name": "해동신용금고",
+    "set": {
+      "corp_code": "00164089"
+    },
+    "dart_corp_name": "해동상호저축은행",
+    "status": "approved",
+    "basis": "rename",
+    "note": "DART 목록에 종목코드 없음. '상호신용금고'가 '상호저축은행'으로 이름이 바뀐 회사이고 그 시기 후보는 이 회사 하나",
+    "evidence": {
+      "same_amount_receipts": []
+    },
+    "decided_by": "사용자 (B5 ③, Claude 조사)",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "DG-0005",
+    "type": "corp_map",
+    "stock_code": "013250",
+    "dataguide_name": "대양상호신용금고",
+    "set": {
+      "corp_code": "00111148"
+    },
+    "dart_corp_name": "대양상호저축은행",
+    "status": "approved",
+    "basis": "rename",
+    "note": "DART 목록에 종목코드 없음. '상호신용금고'가 '상호저축은행'으로 이름이 바뀐 회사이고 그 시기 후보는 이 회사 하나",
+    "evidence": {
+      "same_amount_receipts": []
+    },
+    "decided_by": "사용자 (B5 ③, Claude 조사)",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "DG-0006",
+    "type": "corp_map",
+    "stock_code": "030710",
+    "dataguide_name": "동아상호신용금고",
+    "set": {
+      "corp_code": "00190817"
+    },
+    "dart_corp_name": "동아상호저축은행",
+    "status": "approved",
+    "basis": "rename",
+    "note": "DART 목록에 종목코드 없음. '상호신용금고'가 '상호저축은행'으로 이름이 바뀐 회사이고 그 시기 후보는 이 회사 하나",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20000214000028",
+          "report_name": "반기보고서 (1999.12)",
+          "rcept_dt": "20000214",
+          "dataguide_item": "sep",
+          "dataguide_value": 53245267000.0,
+          "dart_value": "53245267237",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "1999-12-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20000214000028_document_ae5dbbae6d47436db9768a0f7621750d-634.zip",
+          "sha256": "d395940943f33b1bc280c0ceb58eb19e6036ec1651d94be02a4c679f56aaf2d9",
+          "location": "TABLE[63]/ROW[109]"
+        }
+      ]
+    },
+    "decided_by": "사용자 (B5 ③, Claude 조사)",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "DG-0007",
+    "type": "corp_map",
+    "stock_code": "015580",
+    "dataguide_name": "(주)신한은행",
+    "set": {
+      "corp_code": "00137571"
+    },
+    "dart_corp_name": "신한은행",
+    "status": "approved",
+    "basis": "amount",
+    "note": "DART 목록에 종목코드 없음(2001 지주 편입 후 폐지). 같은 이름 DART 회사 중 이 회사의 2003~2005 원문 4건에 DataGuide 015580과 같은 금액. 처음엔 제거법으로 분류했으나 금액 근거 확인 후 사용자 채택",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20031114000735",
+          "report_name": "분기보고서 (2003.09)",
+          "rcept_dt": "20031114",
+          "dataguide_item": "sep",
+          "dataguide_value": 3280085000000.0,
+          "dart_value": "3280085000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2003-09-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20031114000735_document_ae5dbbae6d47436db9768a0f7621750d-15667.zip",
+          "sha256": "c04bb04a22730d504be414fc9093b7a2c06df7e0ec15e2e594d11ccdb488fceb",
+          "location": "TABLE[142]/ROW[29]"
+        },
+        {
+          "receipt_id": "20040330000358",
+          "report_name": "사업보고서 (2003.12)",
+          "rcept_dt": "20040330",
+          "dataguide_item": "sep",
+          "dataguide_value": 3515368000000.0,
+          "dart_value": "3515368000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2003-12-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20040330000358_document_a5cda2606a4840b1b5508cdcfbe4361f-326.zip",
+          "sha256": "09289790985646c756545af1d01e589d4c9e468ad66dc3171c59678b4f1bd011",
+          "location": "TABLE[139]/ROW[29]"
+        },
+        {
+          "receipt_id": "20040813000765",
+          "report_name": "반기보고서 (2004.06)",
+          "rcept_dt": "20040813",
+          "dataguide_item": "sep",
+          "dataguide_value": 3617236000000.0,
+          "dart_value": "3617236000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2004-06-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20040813000765_document_a5cda2606a4840b1b5508cdcfbe4361f-3323.zip",
+          "sha256": "eae808a50af008109e15479eca35dff5088bca4184ba9953ba30244ca614e331",
+          "location": "TABLE[136]/ROW[28]"
+        },
+        {
+          "receipt_id": "20060331000062",
+          "report_name": "사업보고서 (2005.12)",
+          "rcept_dt": "20060331",
+          "dataguide_item": "sep",
+          "dataguide_value": 4599468000000.0,
+          "dart_value": "4599468000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2005-12-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20060331000062_document_a5cda2606a4840b1b5508cdcfbe4361f-9780.zip",
+          "sha256": "5ec95a563ab4a35a4729e71a0b2c4896a6249ded2778a1027c5dde4b5e0d75ce",
+          "location": "TABLE[156]/ROW[28]"
+        }
+      ]
+    },
+    "decided_by": "사용자 (B5 ③, Claude 조사)",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "DG-0008",
+    "type": "corp_map",
+    "stock_code": "023130",
+    "dataguide_name": "국민은행",
+    "set": {
+      "corp_code": "00104476"
+    },
+    "dart_corp_name": "국민은행",
+    "status": "rejected",
+    "basis": "elimination",
+    "note": "같은 이름 DART 회사 중 다른 회사가 이미 다른 종목코드를 가짐(제거법). 금액 근거 없음 -> 사용자 불채택",
+    "evidence": {
+      "same_amount_receipts": []
+    },
+    "decided_by": "사용자 (B5 ③, Claude 조사)",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "DG-0009",
+    "type": "corp_map",
+    "stock_code": "007360",
+    "dataguide_name": "하나은행",
+    "set": {
+      "corp_code": "00156017"
+    },
+    "dart_corp_name": "하나은행",
+    "status": "rejected",
+    "basis": "elimination",
+    "note": "같은 이름 DART 회사 중 다른 회사가 이미 다른 종목코드를 가짐(제거법). 금액 근거 없음 -> 사용자 불채택",
+    "evidence": {
+      "same_amount_receipts": []
+    },
+    "decided_by": "사용자 (B5 ③, Claude 조사)",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "DG-0010",
+    "stock_code": "003060",
+    "dataguide_name": "에이프로젠바이오로직스",
+    "fy": "2000",
+    "quarter": "Semi-Annual",
+    "fiscal_month_dataguide": "9",
+    "month_dataguide": "2000-03",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0011",
+    "stock_code": "003060",
+    "dataguide_name": "에이프로젠바이오로직스",
+    "fy": "2000",
+    "quarter": "3rd-Quarter",
+    "fiscal_month_dataguide": "9",
+    "month_dataguide": "2000-06",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0012",
+    "stock_code": "003060",
+    "dataguide_name": "에이프로젠바이오로직스",
+    "fy": "2000",
+    "quarter": "결산",
+    "fiscal_month_dataguide": "9",
+    "month_dataguide": "2000-09",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0013",
+    "stock_code": "003060",
+    "dataguide_name": "에이프로젠바이오로직스",
+    "fy": "2001",
+    "quarter": "1st-Quarter",
+    "fiscal_month_dataguide": "9",
+    "month_dataguide": "2000-12",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 바로잡을 달에 이미 값이 있음(같은 금액 중복) -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20020214000084",
+          "report_name": "분기보고서 (2001.12)",
+          "rcept_dt": "20020214",
+          "dataguide_item": "sep",
+          "dataguide_value": 12215472000.0,
+          "dart_value": "12215472000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2001-12-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20020214000084_document_ae5dbbae6d47436db9768a0f7621750d-7746.zip",
+          "sha256": "8caadcd03dbcc17de89b5f72a3fc0987a1b544f814fb436af3735bef2d4802af",
+          "location": "TABLE[85]/ROW[19]"
+        }
+      ],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0014",
+    "stock_code": "003060",
+    "dataguide_name": "에이프로젠바이오로직스",
+    "fy": "2001",
+    "quarter": "Semi-Annual",
+    "fiscal_month_dataguide": "9",
+    "month_dataguide": "2001-03",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0015",
+    "stock_code": "003060",
+    "dataguide_name": "에이프로젠바이오로직스",
+    "fy": "2001",
+    "quarter": "3rd-Quarter",
+    "fiscal_month_dataguide": "9",
+    "month_dataguide": "2001-06",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0016",
+    "stock_code": "008970",
+    "dataguide_name": "KBI동양철관",
+    "fy": "2000",
+    "quarter": "Semi-Annual",
+    "fiscal_month_dataguide": "9",
+    "month_dataguide": "2000-03",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0017",
+    "stock_code": "008970",
+    "dataguide_name": "KBI동양철관",
+    "fy": "2000",
+    "quarter": "3rd-Quarter",
+    "fiscal_month_dataguide": "9",
+    "month_dataguide": "2000-06",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0018",
+    "stock_code": "008970",
+    "dataguide_name": "KBI동양철관",
+    "fy": "2000",
+    "quarter": "결산",
+    "fiscal_month_dataguide": "9",
+    "month_dataguide": "2000-09",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0019",
+    "stock_code": "008970",
+    "dataguide_name": "KBI동양철관",
+    "fy": "2001",
+    "quarter": "1st-Quarter",
+    "fiscal_month_dataguide": "9",
+    "month_dataguide": "2000-12",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 바로잡을 달에 이미 값이 있음(같은 금액 중복) -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20020214000412",
+          "report_name": "분기보고서 (2001.12)",
+          "rcept_dt": "20020215",
+          "dataguide_item": "sep",
+          "dataguide_value": 43820000000.0,
+          "dart_value": "43820643000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2001-12-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20020214000412_document_ae5dbbae6d47436db9768a0f7621750d-7949.zip",
+          "sha256": "c18f0d568a094d8c7480d82c1adf1100b2227c0bdfebc20de31e93c61ada1f02",
+          "location": "TABLE[77]/ROW[20]"
+        }
+      ],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0020",
+    "stock_code": "008970",
+    "dataguide_name": "KBI동양철관",
+    "fy": "2001",
+    "quarter": "Semi-Annual",
+    "fiscal_month_dataguide": "9",
+    "month_dataguide": "2001-03",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0021",
+    "stock_code": "008970",
+    "dataguide_name": "KBI동양철관",
+    "fy": "2001",
+    "quarter": "3rd-Quarter",
+    "fiscal_month_dataguide": "9",
+    "month_dataguide": "2001-06",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0022",
+    "stock_code": "009330",
+    "dataguide_name": "(주)삼애인더스",
+    "fy": "2001",
+    "quarter": "Semi-Annual",
+    "fiscal_month_dataguide": "6",
+    "month_dataguide": "2000-12",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0023",
+    "stock_code": "011330",
+    "dataguide_name": "유니켐",
+    "fy": "2014",
+    "quarter": "Semi-Annual",
+    "fiscal_month_dataguide": "6",
+    "month_dataguide": "2013-12",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20151001000001",
+          "report_name": "[기재정정]사업보고서 (2014.06)",
+          "rcept_dt": "20151001",
+          "dataguide_item": "sep",
+          "dataguide_value": 7230539610.0,
+          "dart_value": "7231000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": null,
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20151001000001_document_200965b187404621af8cea61bed52e23-896.zip",
+          "sha256": "8b29690451bf5f9561fd4711591dc70a9265f5c9dd28f9df0bbdebd293071131",
+          "location": "TABLE[3]/ROW[17]"
+        }
+      ],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0024",
+    "stock_code": "015890",
+    "dataguide_name": "태경산업",
+    "fy": "2000",
+    "quarter": "1st-Quarter",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2000-06",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0025",
+    "stock_code": "015890",
+    "dataguide_name": "태경산업",
+    "fy": "2000",
+    "quarter": "Semi-Annual",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2000-09",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "1999-12"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20000214000021",
+          "report_name": "반기보고서 (1999.12)",
+          "rcept_dt": "20000214",
+          "dataguide_item": "sep",
+          "dataguide_value": 47163442000.0,
+          "dart_value": "47163442474",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "1999-12-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20000214000021_document_200965b187404621af8cea61bed52e23-33.zip",
+          "sha256": "d04c089ba8eef332aa062063c9f680aec6b9570eecb3435dc065e7848f6efba6",
+          "location": "TABLE[72]/ROW[19]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0026",
+    "stock_code": "017810",
+    "dataguide_name": "풀무원",
+    "fy": "2009",
+    "quarter": "Semi-Annual",
+    "fiscal_month_dataguide": "9",
+    "month_dataguide": "2009-03",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2009-06"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20090827000131",
+          "report_name": "반기보고서 (2009.06)",
+          "rcept_dt": "20090827",
+          "dataguide_item": "sep",
+          "dataguide_value": 163231749000.0,
+          "dart_value": "163231749470",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2009-06-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20090827000131_document_03e7c19ea9804286a01f2d798daf813a-5962.zip",
+          "sha256": "478655d13a44928ac64f8565964a8ad61cb60ca9755792953b5700e5d58b4ba0",
+          "location": "TABLE[41]/ROW[12]"
+        },
+        {
+          "receipt_id": "20090827000131",
+          "report_name": "반기보고서 (2009.06)",
+          "rcept_dt": "20090827",
+          "dataguide_item": "cons",
+          "dataguide_value": 196262988000.0,
+          "dart_value": "196262987552",
+          "statement_type": "CFS",
+          "concept": "total",
+          "fiscal_period": "2009-06-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20090827000131_document_03e7c19ea9804286a01f2d798daf813a-5962.zip",
+          "sha256": "478655d13a44928ac64f8565964a8ad61cb60ca9755792953b5700e5d58b4ba0",
+          "location": "TABLE[39]/ROW[14]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0027",
+    "stock_code": "028670",
+    "dataguide_name": "팬오션",
+    "fy": "2009",
+    "quarter": "Semi-Annual",
+    "fiscal_month_dataguide": "9",
+    "month_dataguide": "2009-03",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2009-06"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20090828000292",
+          "report_name": "반기보고서 (2009.06)",
+          "rcept_dt": "20090828",
+          "dataguide_item": "sep",
+          "dataguide_value": 2609475000000.0,
+          "dart_value": "2609475000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2009-06-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20090828000292_document_03e7c19ea9804286a01f2d798daf813a-5636.zip",
+          "sha256": "d2842fd15b57ae048230ce9f59f7ef1c751c76a6ae1ec404ba821e7615064b37",
+          "location": "TABLE[105]/ROW[17]"
+        },
+        {
+          "receipt_id": "20090828000292",
+          "report_name": "반기보고서 (2009.06)",
+          "rcept_dt": "20090828",
+          "dataguide_item": "cons",
+          "dataguide_value": 2602181000000.0,
+          "dart_value": "2602181000000",
+          "statement_type": "CFS",
+          "concept": "total",
+          "fiscal_period": "2009-06-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20090828000292_document_03e7c19ea9804286a01f2d798daf813a-5636.zip",
+          "sha256": "d2842fd15b57ae048230ce9f59f7ef1c751c76a6ae1ec404ba821e7615064b37",
+          "location": "TABLE[98]/ROW[19]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0028",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "1999",
+    "quarter": "결산",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2000-03",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0029",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2000",
+    "quarter": "Semi-Annual",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2000-09",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0030",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2000",
+    "quarter": "결산",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2001-03",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0031",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2001",
+    "quarter": "1st-Quarter",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2001-06",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0032",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2001",
+    "quarter": "Semi-Annual",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2001-09",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0033",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2001",
+    "quarter": "3rd-Quarter",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2001-12",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0034",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2001",
+    "quarter": "결산",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2002-03",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2001-12"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20020401000405",
+          "report_name": "[첨부추가]사업보고서 (2001.12)",
+          "rcept_dt": "20020401",
+          "dataguide_item": "sep",
+          "dataguide_value": 344520903000.0,
+          "dart_value": "344521000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2001-12-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20020401000405_document_ae5dbbae6d47436db9768a0f7621750d-8348.zip",
+          "sha256": "19bdab4a2f0842d3e73883b104fc046d4ad504bc2f4920663ced231c9462dc25",
+          "location": "TABLE[72]/ROW[22]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0035",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2002",
+    "quarter": "1st-Quarter",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2002-06",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2002-03"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20020515000596",
+          "report_name": "분기보고서 (2002.03)",
+          "rcept_dt": "20020515",
+          "dataguide_item": "sep",
+          "dataguide_value": 359089859000.0,
+          "dart_value": "359090000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2002-03-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20020515000596_document_ae5dbbae6d47436db9768a0f7621750d-9279.zip",
+          "sha256": "9dd6ebfc25102407b12aacc4cb39a8a33dda8780155b2383f69b4dc65a6b4874",
+          "location": "TABLE[72]/ROW[22]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0036",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2002",
+    "quarter": "Semi-Annual",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2002-09",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2002-06"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20020814000920",
+          "report_name": "반기보고서 (2002.06)",
+          "rcept_dt": "20020814",
+          "dataguide_item": "sep",
+          "dataguide_value": 343846774000.0,
+          "dart_value": "343846000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2002-06-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20020814000920_document_ae5dbbae6d47436db9768a0f7621750d-10270.zip",
+          "sha256": "fb144ccd0f8fd62cffc5b385f61f88246f28f8678c1e4116dde16ddf35033dbc",
+          "location": "TABLE[74]/ROW[22]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0037",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2002",
+    "quarter": "3rd-Quarter",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2002-12",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0038",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2002",
+    "quarter": "결산",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2003-03",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2002-12"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20030331001300",
+          "report_name": "[첨부추가]사업보고서 (2002.12)",
+          "rcept_dt": "20030331",
+          "dataguide_item": "sep",
+          "dataguide_value": 311297222000.0,
+          "dart_value": "311297000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2002-12-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20030331001300_document_ae5dbbae6d47436db9768a0f7621750d-12411.zip",
+          "sha256": "71854b0963371b35d483167b7e7c5ded3a6cf022c814b89b14f7fcc24e3b3a8a",
+          "location": "TABLE[79]/ROW[22]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0039",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2003",
+    "quarter": "1st-Quarter",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2003-06",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2003-03"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20030514001398",
+          "report_name": "분기보고서 (2003.03)",
+          "rcept_dt": "20030514",
+          "dataguide_item": "sep",
+          "dataguide_value": 292376743000.0,
+          "dart_value": "292376000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2003-03-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20030514001398_document_ae5dbbae6d47436db9768a0f7621750d-13462.zip",
+          "sha256": "30ababdef5f38730918c3f1c610c7d92a52134a36010ee3099e9c2a0e750f06c",
+          "location": "TABLE[80]/ROW[22]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0040",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2003",
+    "quarter": "Semi-Annual",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2003-09",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2003-06"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20030814001192",
+          "report_name": "반기보고서 (2003.06)",
+          "rcept_dt": "20030814",
+          "dataguide_item": "sep",
+          "dataguide_value": 298986395000.0,
+          "dart_value": "298986000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2003-06-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20030814001192_document_ae5dbbae6d47436db9768a0f7621750d-14581.zip",
+          "sha256": "39bd9422e50341902194e52d6fe1629f3d902ddac56a45ac7af0a45046e5f975",
+          "location": "TABLE[80]/ROW[22]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0041",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2003",
+    "quarter": "3rd-Quarter",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2003-12",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2003-09"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20031112000148",
+          "report_name": "분기보고서 (2003.09)",
+          "rcept_dt": "20031112",
+          "dataguide_item": "sep",
+          "dataguide_value": 362896686000.0,
+          "dart_value": "362896000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2003-09-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20031112000148_document_ae5dbbae6d47436db9768a0f7621750d-15958.zip",
+          "sha256": "3a472b1cef896b130b6e01c100cc47a194ae2656bc4e74213daa9032610e59f3",
+          "location": "TABLE[80]/ROW[22]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0042",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2003",
+    "quarter": "결산",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2004-03",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2003-12"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20040330001013",
+          "report_name": "[첨부추가]사업보고서 (2003.12)",
+          "rcept_dt": "20040330",
+          "dataguide_item": "sep",
+          "dataguide_value": 325550097000.0,
+          "dart_value": "325550000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2003-12-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20040330001013_document_a5cda2606a4840b1b5508cdcfbe4361f-687.zip",
+          "sha256": "ce324514290b3142897f6d76e8034c2ae66188df5843a1b6e45e80d909a6b327",
+          "location": "TABLE[79]/ROW[19]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0043",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2004",
+    "quarter": "1st-Quarter",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2004-06",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2004-03"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20040514002044",
+          "report_name": "분기보고서 (2004.03)",
+          "rcept_dt": "20040514",
+          "dataguide_item": "sep",
+          "dataguide_value": 324792239000.0,
+          "dart_value": "324792000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2004-03-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20040514002044_document_a5cda2606a4840b1b5508cdcfbe4361f-2327.zip",
+          "sha256": "a896531fdbde31c6dfe2c6c21626d6a50f207db260d17358865590c5f28f91a9",
+          "location": "TABLE[82]/ROW[19]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0044",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2004",
+    "quarter": "Semi-Annual",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2004-09",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2004-06"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20040813001029",
+          "report_name": "반기보고서 (2004.06)",
+          "rcept_dt": "20040813",
+          "dataguide_item": "sep",
+          "dataguide_value": 291584255000.0,
+          "dart_value": "291584000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2004-06-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20040813001029_document_200965b187404621af8cea61bed52e23-304.zip",
+          "sha256": "5bd11ddc114dc295d277418304f6d7b35ca7717a92a8716717474fecc7bd42f8",
+          "location": "TABLE[83]/ROW[19]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0045",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2004",
+    "quarter": "3rd-Quarter",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2004-12",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2004-09"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20041112000897",
+          "report_name": "분기보고서 (2004.09)",
+          "rcept_dt": "20041113",
+          "dataguide_item": "sep",
+          "dataguide_value": 276703507000.0,
+          "dart_value": "276703000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2004-09-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20041112000897_document_a5cda2606a4840b1b5508cdcfbe4361f-4587.zip",
+          "sha256": "946fc96396ba43e89fae6232c85381682060f7c4bcc8af927943744bb4f411e6",
+          "location": "TABLE[82]/ROW[19]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0046",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2004",
+    "quarter": "결산",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2005-03",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2004-12"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20050331001116",
+          "report_name": "[첨부추가]사업보고서 (2004.12)",
+          "rcept_dt": "20050331",
+          "dataguide_item": "sep",
+          "dataguide_value": 227539500000.0,
+          "dart_value": "227540000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2004-12-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20050331001116_document_a5cda2606a4840b1b5508cdcfbe4361f-5758.zip",
+          "sha256": "a3c18d0d8f8582d069369b2e1760474af1392be42c11737ace727035ef295f44",
+          "location": "TABLE[82]/ROW[19]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0047",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2005",
+    "quarter": "1st-Quarter",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2005-06",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2005-03"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20050516001462",
+          "report_name": "분기보고서 (2005.03)",
+          "rcept_dt": "20050516",
+          "dataguide_item": "sep",
+          "dataguide_value": 263244023000.0,
+          "dart_value": "263244000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2005-03-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20050516001462_document_a5cda2606a4840b1b5508cdcfbe4361f-6766.zip",
+          "sha256": "9ccf56a7866861229471c938b0141aaf11711bc5921cfa609df673bbd9313701",
+          "location": "TABLE[79]/ROW[20]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0048",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2005",
+    "quarter": "Semi-Annual",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2005-09",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2005-06"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20050812000697",
+          "report_name": "반기보고서 (2005.06)",
+          "rcept_dt": "20050812",
+          "dataguide_item": "sep",
+          "dataguide_value": 266720301000.0,
+          "dart_value": "266720000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2005-06-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20050812000697_document_a5cda2606a4840b1b5508cdcfbe4361f-7737.zip",
+          "sha256": "3a4a645bc84805100f8e5b49d7f1f00b84111c6e495a6835a1e341a708a09393",
+          "location": "TABLE[77]/ROW[20]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0049",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2005",
+    "quarter": "3rd-Quarter",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2005-12",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2005-09"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20051114000977",
+          "report_name": "분기보고서 (2005.09)",
+          "rcept_dt": "20051114",
+          "dataguide_item": "sep",
+          "dataguide_value": 280052307000.0,
+          "dart_value": "280052000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2005-09-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20051114000977_document_a5cda2606a4840b1b5508cdcfbe4361f-8832.zip",
+          "sha256": "fcb613c89fc0c982a5b38b9e17956a2e04ccacfabeff4e3fa42a6e0a6e599751",
+          "location": "TABLE[76]/ROW[20]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0050",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2005",
+    "quarter": "결산",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2006-03",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2005-12"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20060331002188",
+          "report_name": "[첨부추가]사업보고서 (2005.12)",
+          "rcept_dt": "20060331",
+          "dataguide_item": "sep",
+          "dataguide_value": 300760000000.0,
+          "dart_value": "300760000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2005-12-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20060331002188_document_a5cda2606a4840b1b5508cdcfbe4361f-9986.zip",
+          "sha256": "b1aee5814cb32c616d14595c27885dab5e748c3205ca1adf1fde58bcaab05d78",
+          "location": "TABLE[81]/ROW[20]"
+        },
+        {
+          "receipt_id": "20060331002188",
+          "report_name": "[첨부추가]사업보고서 (2005.12)",
+          "rcept_dt": "20060331",
+          "dataguide_item": "owners",
+          "dataguide_value": 300759957000.0,
+          "dart_value": "300760000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2005-12-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20060331002188_document_a5cda2606a4840b1b5508cdcfbe4361f-9986.zip",
+          "sha256": "b1aee5814cb32c616d14595c27885dab5e748c3205ca1adf1fde58bcaab05d78",
+          "location": "TABLE[81]/ROW[20]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0051",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2006",
+    "quarter": "1st-Quarter",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2006-06",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2006-03"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20060515003055",
+          "report_name": "분기보고서 (2006.03)",
+          "rcept_dt": "20060515",
+          "dataguide_item": "sep",
+          "dataguide_value": 310074884000.0,
+          "dart_value": "310075000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2006-03-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20060515003055_document_a5cda2606a4840b1b5508cdcfbe4361f-10970.zip",
+          "sha256": "2f578e4fec387e2b86a184240d4902fc45ca76a4f9430f1b9b133b8c5e1468e0",
+          "location": "TABLE[75]/ROW[20]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0052",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2006",
+    "quarter": "Semi-Annual",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2006-09",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2006-06"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20060814001346",
+          "report_name": "반기보고서 (2006.06)",
+          "rcept_dt": "20060814",
+          "dataguide_item": "sep",
+          "dataguide_value": 315506254000.0,
+          "dart_value": "315506000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2006-06-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20060814001346_document_a5cda2606a4840b1b5508cdcfbe4361f-11971.zip",
+          "sha256": "c209823a519c49b2522d65371eef868729f460005f4460ac40560cde753389ad",
+          "location": "TABLE[82]/ROW[21]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0053",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2006",
+    "quarter": "3rd-Quarter",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2006-12",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2006-09"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20061114001371",
+          "report_name": "분기보고서 (2006.09)",
+          "rcept_dt": "20061114",
+          "dataguide_item": "sep",
+          "dataguide_value": 313932766000.0,
+          "dart_value": "313933000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2006-09-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20061114001371_document_a5cda2606a4840b1b5508cdcfbe4361f-13089.zip",
+          "sha256": "d3cb04a878ee91cc9d9274b0da24d9df7ae4ef59f2ef66245d35d530746c9469",
+          "location": "TABLE[80]/ROW[21]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0054",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2006",
+    "quarter": "결산",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2007-03",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2006-12"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20070330002311",
+          "report_name": "[첨부추가]사업보고서 (2006.12)",
+          "rcept_dt": "20070330",
+          "dataguide_item": "sep",
+          "dataguide_value": 310334601000.0,
+          "dart_value": "310335000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2006-12-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20070330002311_document_a5cda2606a4840b1b5508cdcfbe4361f-14222.zip",
+          "sha256": "c3253cce7e89004c2b4a31ad29a28d3579a5007b6d9aef78fa3af0f54bfd5f6d",
+          "location": "TABLE[79]/ROW[21]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0055",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2007",
+    "quarter": "1st-Quarter",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2007-06",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0056",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2007",
+    "quarter": "Semi-Annual",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2007-09",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month_unreliable",
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 금액의 DART 원문이 없어 실제 기간을 확인할 수 없음 -> 쓰지 않음",
+    "evidence": {
+      "same_amount_receipts": [],
+      "dart_annual_report_months_differ": true
+    }
+  },
+  {
+    "id": "DG-0057",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2007",
+    "quarter": "3rd-Quarter",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2007-12",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2007-09"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20071114001405",
+          "report_name": "분기보고서 (2007.09)",
+          "rcept_dt": "20071114",
+          "dataguide_item": "sep",
+          "dataguide_value": 354665370000.0,
+          "dart_value": "354665370047",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2007-09-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20071114001405_document_a5cda2606a4840b1b5508cdcfbe4361f-17497.zip",
+          "sha256": "485abb9742290bf2ca2ea0171e6f6c33d57e29dd8d8bf9f20ac130165585dd60",
+          "location": "TABLE[80]/ROW[73]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0058",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2007",
+    "quarter": "결산",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2008-03",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2007-12"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20080331002039",
+          "report_name": "[첨부추가]사업보고서 (2007.12)",
+          "rcept_dt": "20080331",
+          "dataguide_item": "sep",
+          "dataguide_value": 358295552000.0,
+          "dart_value": "358296000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2007-12-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20080331002039_document_a5cda2606a4840b1b5508cdcfbe4361f-18716.zip",
+          "sha256": "671073d1dedc1b58a63d12c989bdcfcaae04fc4fd5800c5538056356db294c28",
+          "location": "TABLE[65]/ROW[21]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0059",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2008",
+    "quarter": "1st-Quarter",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2008-06",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2008-03"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20080515002431",
+          "report_name": "분기보고서 (2008.03)",
+          "rcept_dt": "20080515",
+          "dataguide_item": "sep",
+          "dataguide_value": 399129004000.0,
+          "dart_value": "399129000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2008-03-31",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20080515002431_document_03e7c19ea9804286a01f2d798daf813a-707.zip",
+          "sha256": "9fc7fcf079e53df35684c588ad3708986ddebd4bb5b581323ccb08edda753a7d",
+          "location": "TABLE[66]/ROW[19]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0060",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2008",
+    "quarter": "Semi-Annual",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2008-09",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2008-06"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20080814001749",
+          "report_name": "반기보고서 (2008.06)",
+          "rcept_dt": "20080814",
+          "dataguide_item": "sep",
+          "dataguide_value": 515624546000.0,
+          "dart_value": "515625000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2008-06-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20080814001749_document_03e7c19ea9804286a01f2d798daf813a-1722.zip",
+          "sha256": "1466c93a3eff707bb23eba60afa59d1d42dcfb1b371d8a08993b216cd7f38f2a",
+          "location": "TABLE[74]/ROW[23]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "DG-0061",
+    "stock_code": "030210",
+    "dataguide_name": "다올투자증권",
+    "fy": "2008",
+    "quarter": "3rd-Quarter",
+    "fiscal_month_dataguide": "3",
+    "month_dataguide": "2008-12",
+    "decided_by": "사용자 (B5 ④, Claude 조사)",
+    "decided_at": "2026-11-03",
+    "type": "statement_month",
+    "set": {
+      "month": "2008-09"
+    },
+    "status": "approved",
+    "note": "DataGuide 결산월이 실제와 다름. 같은 회사 DART 원문에서 같은 금액의 재무상태표 날짜로 바로잡음",
+    "evidence": {
+      "same_amount_receipts": [
+        {
+          "receipt_id": "20081114001923",
+          "report_name": "분기보고서 (2008.09)",
+          "rcept_dt": "20081114",
+          "dataguide_item": "sep",
+          "dataguide_value": 491495428000.0,
+          "dart_value": "491495000000",
+          "statement_type": "OFS",
+          "concept": "total",
+          "fiscal_period": "2008-09-30",
+          "raw_path": "data/raw/opendart/history_collect/market_20000101_20211231/20081114001923_document_03e7c19ea9804286a01f2d798daf813a-2803.zip",
+          "sha256": "27069a40f1a391862804f782d5bb08e74ba8c4021efd694d12867c89b91eff0a",
+          "location": "TABLE[92]/ROW[18]"
+        }
+      ]
+    }
+  }
+]

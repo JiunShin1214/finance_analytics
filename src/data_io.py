@@ -1,46 +1,191 @@
-# 원본 패널을 읽고 열 이름을 공통 형식으로 맞추며 산출물을 저장하는 모듈이다.
-# 입출력 스키마와 파일 접근 범위를 확인하는 함수 골격을 정의한다.
-# 예상 산출물: 반환용 표준 입력표와 출력 계약에 맞춘 CSV·Parquet 파일.
+# 교수 제공 개발용 wide CSV를 메모리 관측 패널로 읽는다. 저장/목표값 결합은 하지 않는다.
 
 from __future__ import annotations
 
+import csv
 from pathlib import Path
-from typing import TYPE_CHECKING, Mapping
-from src.contracts import Config
+from typing import Mapping, Sequence
 
-if TYPE_CHECKING:
-    from pandas import DataFrame
+import numpy as np
+import pandas as pd
+from pandas import DataFrame
+
+from src.contracts import (
+    Config, DEVELOPMENT_MONTHS, NUMERIC_PANEL_UNITS, WIDE_PANEL_COLUMNS,
+    WIDE_VARIABLE_COLUMNS,
+)
+from src.preprocessing.panel import (
+    enforce_unique_stock_month, normalize_month, normalize_stock_id,
+)
 
 
-def load_panel_contract(path: Path, *, column_mapping: Mapping[str, str | None], config: Config) -> DataFrame:
-    """패널 경로와 열 대응 설정을 받아 표준 PANEL_COLUMNS 표를 반환한다.
+def _approved_sources(root: Path, config: Config, periods: Sequence[str]) -> list[tuple[str, str, Path]]:
+    """전체 요청을 preflight한다. 내용 open 없이 기간·명시 경로·링크 우회를 검사한다."""
+    if (not periods or len(set(periods)) != len(periods)
+            or any(p not in DEVELOPMENT_MONTHS for p in periods)):
+        raise PermissionError("only warmup_2000 and train_2001_2021 are allowed")
+    manifest = config.get("PATHS", {}).get("wide_csv", {})
+    if not isinstance(manifest, Mapping) or set(manifest) != set(DEVELOPMENT_MONTHS):
+        raise PermissionError("unverified development input manifest")
+    root = root.resolve()
+    if not root.is_dir():
+        raise PermissionError("path must be the project root, not an arbitrary CSV")
+    sources = []
+    for period, files in manifest.items():
+        if not isinstance(files, Mapping) or set(files) != set(WIDE_VARIABLE_COLUMNS):
+            raise PermissionError("unverified variable manifest")
+        for variable in WIDE_VARIABLE_COLUMNS:
+            declared = files[variable]
+            expected = Path("data") / "raw" / f"{period}__{variable}.csv"
+            if not isinstance(declared, str) or Path(declared) != expected:
+                raise PermissionError(f"unapproved source for {period}/{variable}")
+            candidate = root / expected
+            # symlink/junction을 통한 다른 경로의 Test/불명 파일 접근도 거부한다.
+            if candidate.resolve() != candidate:
+                raise PermissionError("redirected input path is not allowed")
+            if period in periods:
+                sources.append((period, variable, candidate))
+    return sources
 
-    TODO: 읽기 전에 파일의 선언된 기간을 확인하고 Test 포함·범위 불명 파일을 차단한다.
-    종목코드 문자열, 달력월, 소수 수익률, 원 단위 시총과 적격 여부를 검사한다.
-    열 대응·단위가 불명확하거나 필수 열이 없으면 오류를 발생시킨다.
+
+def _read_wide_csv(source: Path, period: str, variable: str) -> tuple[DataFrame, list[str], dict]:
+    # 호출자는 전체 manifest preflight가 끝난 load_panel_contract뿐이다.
+    with source.open("r", encoding="utf-8-sig", newline="") as stream:
+        reader = csv.reader(stream, strict=True)
+        header = next(reader, [])
+        if (len(header) < 2 or header[0] != "month"
+                or len(set(header)) != len(header)):
+            raise ValueError(f"{source.name}: missing/duplicate month or stock columns")
+        stocks = list(normalize_stock_id(header[1:]))
+        rows = []
+        for line, row in enumerate(reader, 2):
+            if len(row) != len(header):
+                raise ValueError(f"{source.name}: wrong field count at line {line}")
+            rows.append(row)
+    months = list(normalize_month([row[0] for row in rows]))
+    if len(set(months)) != len(months):
+        raise ValueError(f"{source.name}: duplicate months")
+    start, end = DEVELOPMENT_MONTHS[period]
+    expected = pd.period_range(start, end, freq="M").astype(str).tolist()
+    if months != expected:
+        raise ValueError(f"{source.name}: missing, unordered or out-of-scope months")
+    raw = pd.DataFrame([row[1:] for row in rows], columns=stocks, index=months, dtype=object)
+    blank = raw.eq("")
+    field = WIDE_VARIABLE_COLUMNS[variable]
+    if field in NUMERIC_PANEL_UNITS:
+        numeric = raw.apply(pd.to_numeric, errors="coerce")
+        invalid = ~blank & numeric.isna()
+        if invalid.to_numpy().any():
+            i, j = np.argwhere(invalid.to_numpy())[0]
+            raise ValueError(
+                f"{source.name}: numeric_parse_failure month={months[i]} "
+                f"stock_id={stocks[j]} token={raw.iat[i, j]!r}; not an empty cell"
+            )
+        values = numeric.to_numpy(dtype=float)
+        if (~np.isfinite(values) & ~blank.to_numpy()).any():
+            raise ValueError(f"{source.name}: nonfinite numeric value")
+        table = pd.DataFrame(values, index=months, columns=stocks)
+    else:
+        # keep_default_na와 같은 암묵적 NA 사전을 쓰지 않는다. 'NA' 등 원문 보존.
+        table = raw.mask(blank, np.nan)
+    audit = {
+        "source": source.name, "period": period, "variable": variable,
+        "rows": len(months), "columns": len(header),
+        "empty_cells": int(blank.to_numpy().sum()),
+        "zero_cells": int(table.eq(0).to_numpy().sum()) if field in NUMERIC_PANEL_UNITS else None,
+        "unit": NUMERIC_PANEL_UNITS.get(field, "text"),
+    }
+    return table, stocks, audit
+
+
+def load_panel_contract(
+    path: Path, *, column_mapping: Mapping[str, str | None], config: Config,
+    periods: Sequence[str] = tuple(DEVELOPMENT_MONTHS),
+) -> DataFrame:
+    """프로젝트 루트 + 명시 wide manifest -> stock_id/month 관측 패널(메모리).
+
+    path는 CSV 한 개가 아닌 프로젝트 루트다. periods는 개발기간만 허용한다.
+    모든 요청 경로를 첫 파일 open 전에 검사한다. 목표/특징/표본은 만들지 않는다.
+    eligible는 원천 부재로 미확인 결측이며 추론/학습 적격성을 인증하지 않는다.
     """
-    raise NotImplementedError
+    sources = _approved_sources(Path(path), config, periods)
+    expected_mapping = {field: variable for variable, field in WIDE_VARIABLE_COLUMNS.items()}
+    expected_mapping.update(stock_id="stock_id", month="month", eligible=None)
+    if dict(column_mapping) != expected_mapping:
+        raise ValueError("panel column mapping does not match the declared wide variables")
+    for field, unit in NUMERIC_PANEL_UNITS.items():
+        if config.get("UNITS", {}).get(field) != unit:
+            raise ValueError(f"unknown unit for {field}: expected {unit}")
+    panels, audits = [], []
+    reference_stocks = None
+    for period in periods:
+        data = {}
+        months = None
+        stocks = None
+        for declared_period, variable, source in sources:
+            if declared_period != period:
+                continue
+            wide, stocks, audit = _read_wide_csv(source, period, variable)
+            if reference_stocks is None:
+                reference_stocks = stocks
+            if stocks != reference_stocks:
+                raise ValueError(f"{source.name}: stock columns/order mismatch")
+            months = wide.index.tolist()
+            data[variable] = wide.to_numpy().reshape(-1)
+            audits.append(audit)
+        observed = pd.DataFrame(data)
+        observed["stock_id"] = np.tile(stocks, len(months))
+        observed["month"] = np.repeat(months, len(stocks))
+        observed = normalize_columns_contract(observed, column_mapping=column_mapping)
+        observed["eligible"] = pd.Series(pd.NA, index=observed.index, dtype="boolean")
+        panels.append(observed.loc[:, WIDE_PANEL_COLUMNS])
+    result = pd.concat(panels, ignore_index=True)
+    validate_input_schema(result, contract_name="panel", config=config)
+    result.attrs.update(input_audit=audits, units=dict(NUMERIC_PANEL_UNITS),
+                        stock_columns=tuple(reference_stocks), eligibility_status="unverified")
+    return result
 
 
 def normalize_columns_contract(table: DataFrame, *, column_mapping: Mapping[str, str | None]) -> DataFrame:
     """열 대응표에 따라 입력 열을 표준 필드명으로 바꾼 복사본을 반환한다.
 
-    0과 결측 보존, 단위 변환 근거를 별도 기록. 자동 % 추정 금지.
+    값·자료형·행을 바꾸지 않는다. null 매핑은 생성할 수 없는 원천을 뜻한다.
     """
-    raise NotImplementedError
+    mapping = {source: target for target, source in column_mapping.items() if source is not None}
+    if len(mapping) != sum(v is not None for v in column_mapping.values()):
+        raise ValueError("ambiguous column mapping")
+    if not table.columns.is_unique or not set(mapping).issubset(table.columns):
+        raise ValueError("missing or duplicated source columns")
+    result = table.rename(columns=mapping).copy()
+    if not result.columns.is_unique:
+        raise ValueError("column mapping creates duplicate columns")
+    return result
 
 
 def validate_input_schema(table: DataFrame, *, contract_name: str, config: Config) -> None:
-    """표와 panel/security_map/dart/documents 계약명 -> 검증한다.
-
-    TODO: contracts.py의 필수 열/자료형/유일키·단위·시점 확인.
-    계약명 불명, 코드 앞자리 소실, 중복/누락, 불명 단위는 오류 처리.
-    documents는 H2/H4 전달용 메타데이터 계약이며 문서 메타데이터를 검사한다.
-    정책 추출문은 POLICY_TEXT_COLUMNS, 뉴스 기사는 NEWS_ARTICLE_COLUMNS를 적용한다.
-    H2/H4 특징은 H2_FEATURE_COLUMNS/H4_FEATURE_COLUMNS를 검사하고,
-    통합 특징·표본은 활성 확장에 해당하는 EXTENDED_* 열을 추가 검사한다.
-    """
-    raise NotImplementedError
+    """현재는 개발용 관측 panel만 검증. 다른 입력/PIT 계약은 미구현이다."""
+    if contract_name != "panel":
+        raise NotImplementedError("only the development panel schema is implemented")
+    if not table.columns.is_unique or not set(WIDE_PANEL_COLUMNS).issubset(table.columns):
+        raise ValueError("missing or duplicated panel columns")
+    enforce_unique_stock_month(table, month_column="month")
+    normalize_stock_id(table["stock_id"].tolist())
+    months = normalize_month(table["month"].tolist())
+    if any(not "2000-01" <= month <= "2021-12" for month in months):
+        raise ValueError("panel contains non-development months")
+    for field, unit in NUMERIC_PANEL_UNITS.items():
+        if config.get("UNITS", {}).get(field) != unit:
+            raise ValueError(f"unknown unit for {field}")
+        if (not pd.api.types.is_numeric_dtype(table[field])
+                or pd.api.types.is_bool_dtype(table[field])):
+            raise ValueError(f"{field}: numeric dtype required")
+        if not np.isfinite(table[field].dropna().to_numpy(dtype=float)).all():
+            raise ValueError(f"{field}: nonfinite numeric value")
+    for field in ("company_name", "isin"):
+        if any(not isinstance(v, str) for v in table[field].dropna()):
+            raise ValueError(f"{field}: text values required")
+    if str(table["eligible"].dtype) != "boolean" or not table["eligible"].isna().all():
+        raise ValueError("raw wide files do not certify historical eligibility")
 
 
 def write_output_contract(table: DataFrame, path: Path, *, contract_name: str, config: Config) -> None:

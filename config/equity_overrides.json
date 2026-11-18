@@ -1,0 +1,402 @@
+[
+  {
+    "id": "EQ-0001",
+    "receipt_id": "20160523000193",
+    "corp_code": "00112907",
+    "report_name": "[기재정정]사업보고서 (2015.12)",
+    "issue": "statement_date_unverified",
+    "status": "approved",
+    "expected_before": {
+      "equity": "357315073905",
+      "equity_tier": "T3_separate_total",
+      "fiscal_period": null
+    },
+    "set": {
+      "fiscal_period": "2015-12-31",
+      "fiscal_period_basis": "manual_override"
+    },
+    "evidence": {
+      "raw_path": "data/raw/opendart/original_collect/20261101T220713895061/20160523000193_document_8413fabb5b434ba4a335599cea205ed5-1451.zip",
+      "sha256": "7c86b1c8f6a0291535de5ed39c72b16321d4642ad1e7342bf7886d26c14675c5",
+      "location": "/20160523000193.xml TABLE[189]",
+      "note": "머리글 '제38(당)기말'. 자산 760,084,308,609 - 부채 402,769,234,704 = 자본 357,315,073,905. 최초본 20160330003310 감사보고서 재무상태표(2015-12-31)에 같은 금액",
+      "dart_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20160523000193"
+    },
+    "decided_by": "사용자·Claude 원문 확인",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "EQ-0002",
+    "receipt_id": "20210517001408",
+    "corp_code": "00854997",
+    "report_name": "분기보고서 (2021.03)",
+    "issue": "statement_date_unverified",
+    "status": "approved",
+    "expected_before": {
+      "equity": "1141060425874",
+      "equity_tier": "T1_consolidated_owners",
+      "fiscal_period": null
+    },
+    "set": {
+      "fiscal_period": "2021-03-31",
+      "fiscal_period_basis": "manual_override"
+    },
+    "evidence": {
+      "raw_path": "data/raw/opendart/original_collect/20261101T220713895061/20210517001408_document_0741926f18414ad68b7a5f5f815cbe7a-35837.zip",
+      "sha256": "95c70e5860d8ebcfe8dfae9852e487242856a97e99378294f3d36b0c3c2cca6c",
+      "location": "20210517001408.xml TABLE[89]",
+      "note": "머리글 '2021년 1분기 (제12기)', 12월 결산. 소유주 1,141,060,425,874 + 비지배 10,363,473,653 = 자본총계 1,151,423,899,527 = 자산 - 부채",
+      "dart_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20210517001408"
+    },
+    "decided_by": "사용자·Claude 원문 확인",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "EQ-0003",
+    "receipt_id": "20170814001936",
+    "corp_code": "00112059",
+    "report_name": "반기보고서 (2017.06)",
+    "issue": "consolidated_identity_failed",
+    "status": "approved",
+    "expected_before": {
+      "equity": "142716092776",
+      "equity_tier": "T3_separate_total",
+      "fiscal_period": "2017-06-30"
+    },
+    "set": {
+      "equity": "140946628697",
+      "equity_tier": "T1_consolidated_owners",
+      "statement_type": "CFS",
+      "account_name": "지배기업소유지분",
+      "section": "full"
+    },
+    "evidence": {
+      "raw_path": "data/raw/opendart/filing_originals/document_20170814001936_115d6393b425_ZIP_BODY_20261101T173001313077.zip",
+      "sha256": "d839c922c5480226bdd6e064f5ac733849e81f868c87803e7f243128131ab9b5",
+      "location": "20170814001936.xml TABLE[87] R13,R24,R26,R32,R33,R34",
+      "note": "자산총계 행 오기: 부채 528,094,528,382 + 자본 154,601,312,781 = 부채및자본총계 682,695,841,163 ≠ 자산총계 684,396,691,163. 소유주 + 비지배 = 자본총계 성립",
+      "dart_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20170814001936"
+    },
+    "decided_by": "사용자·Claude 원문 확인",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "EQ-0004",
+    "receipt_id": "20210817001293",
+    "corp_code": "00147295",
+    "report_name": "반기보고서 (2021.06)",
+    "issue": "consolidated_identity_failed",
+    "status": "approved",
+    "expected_before": {
+      "equity": "1496861000000",
+      "equity_tier": "T3_separate_total",
+      "fiscal_period": "2021-06-30"
+    },
+    "set": {
+      "equity": "1536467000000",
+      "equity_tier": "T1D_consolidated_total_less_nci",
+      "statement_type": "CFS",
+      "account_name": "자본총계-비지배지분",
+      "section": "full"
+    },
+    "evidence": {
+      "raw_path": "data/raw/opendart/original_collect/20261101T220713895061/20210817001293_document_0741926f18414ad68b7a5f5f815cbe7a-14783.zip",
+      "sha256": "eb44684346dd7d90d957b08232cfef87eccd1753e4d5bd39dcfcf60ad1c23c31",
+      "location": "20210817001293.xml TABLE[99] R16-R25,R27-R32",
+      "note": "부채총계 행 오기: 부채 항목 합 18,167,509 ≠ 표기 18,161,509(백만원). 자본 구성항목 합 = 자본총계 1,629,702. 자본총계 - 비지배주주지분 93,235",
+      "dart_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20210817001293"
+    },
+    "decided_by": "사용자·Claude 원문 확인",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "EQ-0005",
+    "receipt_id": "20211115002108",
+    "corp_code": "00209443",
+    "report_name": "분기보고서 (2021.09)",
+    "issue": "consolidated_identity_failed",
+    "status": "approved",
+    "expected_before": {
+      "equity": "976176859714",
+      "equity_tier": "T3_separate_total",
+      "fiscal_period": "2021-09-30"
+    },
+    "set": {
+      "equity": "976196547106",
+      "equity_tier": "T2_consolidated_total",
+      "statement_type": "CFS",
+      "account_name": "자산총계-부채총계",
+      "section": "full"
+    },
+    "evidence": {
+      "raw_path": "data/raw/opendart/original_collect/20261101T220713895061/20211115002108_document_0741926f18414ad68b7a5f5f815cbe7a-26243.zip",
+      "sha256": "f653caa9cdc7aa69093c1fd7ff2db3836708d15e14249c1b996beb7046f56f90",
+      "location": "20211115002108.xml TABLE[69] R27,R40,R47",
+      "note": "자본총계 칸에 자산총계 9,392,490,799,433 기재. 자산 - 부채 8,416,294,252,327. 이후 정정본 20220111000373 값과 일치",
+      "dart_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20211115002108"
+    },
+    "decided_by": "사용자·Claude 원문 확인",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "EQ-0006",
+    "receipt_id": "20150515002022",
+    "corp_code": "00148832",
+    "report_name": "분기보고서 (2015.03)",
+    "issue": "owners_identity_failed",
+    "status": "approved",
+    "expected_before": {
+      "equity": "310731000.000",
+      "equity_tier": "T1_consolidated_owners",
+      "fiscal_period": "2015-03-31"
+    },
+    "set": {
+      "equity": "310731000000",
+      "equity_tier": "T1D_consolidated_total_less_nci",
+      "statement_type": "CFS",
+      "account_name": "지배기업 소유지분(소수점 오기 교정)",
+      "owners_resolution": "manual_override"
+    },
+    "evidence": {
+      "raw_path": "data/raw/opendart/original_collect/20261101T220713895061/20150515002022_document_0741926f18414ad68b7a5f5f815cbe7a-15225.zip",
+      "sha256": "08e4ea7b3911331dccbbe7ce6396b0b9e55fc846d37e46a9e5973788fafbc35a",
+      "location": "/20150515002022.xml TABLE[99] R22,R28,R29",
+      "note": "소유지분 칸 '310.731' 소수점 오기, 비지배 '-', 자본총계 310,731백만원",
+      "dart_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20150515002022"
+    },
+    "decided_by": "사용자·Claude 원문 확인",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "EQ-0007",
+    "receipt_id": "20150817000987",
+    "corp_code": "00113410",
+    "report_name": "반기보고서 (2015.06)",
+    "issue": "owners_identity_failed",
+    "status": "approved",
+    "expected_before": {
+      "equity": "2270538700857",
+      "equity_tier": "T1_consolidated_owners",
+      "fiscal_period": "2015-06-30"
+    },
+    "set": {
+      "equity": "2254389939694",
+      "equity_tier": "T1D_consolidated_total_less_nci",
+      "statement_type": "CFS",
+      "account_name": "자본총계-비지배지분",
+      "owners_resolution": "manual_override"
+    },
+    "evidence": {
+      "raw_path": "data/raw/opendart/original_collect/20261101T220713895061/20150817000987_document_8413fabb5b434ba4a335599cea205ed5-1784.zip",
+      "sha256": "15cbf2dba113febd4a9f3739b6d8f13251bbca42798e119e123bf3197b5685a9",
+      "location": "/20150817000987.xml TABLE[74] R24-R33; TABLE[66] R15",
+      "note": "소계가 기타자본구성요소 -16,148,761,163 누락. 구성항목 전체 합 = 자본총계 - 비지배. 요약재무정보 소유주지분 2,254,390백만원과 일치",
+      "dart_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20150817000987"
+    },
+    "decided_by": "사용자·Claude 원문 확인",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "EQ-0008",
+    "receipt_id": "20151116001653",
+    "corp_code": "00112332",
+    "report_name": "분기보고서 (2015.09)",
+    "issue": "owners_identity_failed",
+    "status": "approved",
+    "expected_before": {
+      "equity": "1539681413496",
+      "equity_tier": "T1_consolidated_owners",
+      "fiscal_period": "2015-09-30"
+    },
+    "set": {
+      "equity": "1825106121988",
+      "equity_tier": "T1D_consolidated_total_less_nci",
+      "statement_type": "CFS",
+      "account_name": "자본총계-비지배지분",
+      "owners_resolution": "manual_override"
+    },
+    "evidence": {
+      "raw_path": "data/raw/opendart/original_collect/20261101T220713895061/20151116001653_document_8413fabb5b434ba4a335599cea205ed5-1239.zip",
+      "sha256": "1892f9d36a5d0863cf175b1e5d5d1f0315cdc6bbda6a6c9bb9919579fd47e82a",
+      "location": "/20151116001653.xml TABLE[80] R30,R36,R37; TABLE[74] R14",
+      "note": "요약분기연결재무상태표 세부 열 오독(1,539,681,413,496). 자본총계 1,825,344,341,401 - 비지배 238,219,413. 요약재무정보 지배회사지분 1,825,106백만원과 일치",
+      "dart_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20151116001653"
+    },
+    "decided_by": "사용자·Claude 원문 확인",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "EQ-0009",
+    "receipt_id": "20160516000611",
+    "corp_code": "00101336",
+    "report_name": "분기보고서 (2016.03)",
+    "issue": "owners_identity_failed",
+    "status": "approved",
+    "expected_before": {
+      "equity": "302666681339",
+      "equity_tier": "T1_consolidated_owners",
+      "fiscal_period": "2016-03-31"
+    },
+    "set": {
+      "equity": "302471190670",
+      "equity_tier": "T1D_consolidated_total_less_nci",
+      "statement_type": "CFS",
+      "account_name": "자본총계-비지배지분",
+      "owners_resolution": "manual_override"
+    },
+    "evidence": {
+      "raw_path": "data/raw/opendart/original_collect/20261101T220713895061/20160516000611_document_4c12125018fd48adbdbd6075ce03e0cc-144.zip",
+      "sha256": "ebea758b16e057b7dc297dab2ab23ae5b64c65aa919cd4e82fe8016d6ed10b71",
+      "location": "/20160516000611.xml TABLE[76] R32-R39",
+      "note": "구성항목(자본금+자본잉여금+기타자본+기타포괄손익+이익잉여금, 소유주지분 행 위 R32-R36) 합 302,471,190,670 = 자본총계 = 자산-부채. 비지배 0. 소유주지분 행 302,666,681,339는 같은 공시 XBRL 별도 자본총계와 같은 값",
+      "dart_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20160516000611"
+    },
+    "decided_by": "사용자·Claude 원문 확인",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "EQ-0010",
+    "receipt_id": "20160812000103",
+    "corp_code": "00101336",
+    "report_name": "반기보고서 (2016.06)",
+    "issue": "owners_identity_failed",
+    "status": "approved",
+    "expected_before": {
+      "equity": "313107595915",
+      "equity_tier": "T1_consolidated_owners",
+      "fiscal_period": "2016-06-30"
+    },
+    "set": {
+      "equity": "312517061336",
+      "equity_tier": "T1D_consolidated_total_less_nci",
+      "statement_type": "CFS",
+      "account_name": "자본총계-비지배지분",
+      "owners_resolution": "manual_override"
+    },
+    "evidence": {
+      "raw_path": "data/raw/opendart/original_collect/20261101T220713895061/20160812000103_document_4c12125018fd48adbdbd6075ce03e0cc-136.zip",
+      "sha256": "3144c9b8daccc217c1875173120361301caf119aa6f9a8b85ad58a17ec2bb5ae",
+      "location": "/20160812000103.xml TABLE[79] R32-R39",
+      "note": "구성항목(R32-R36) 합 312,517,061,336 = 자본총계 = 자산-부채. 비지배 0. 소유주지분 행 313,107,595,915는 이익잉여금 행 값을 옮긴 것",
+      "dart_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20160812000103"
+    },
+    "decided_by": "사용자·Claude 원문 확인",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "EQ-0011",
+    "receipt_id": "20161114000077",
+    "corp_code": "00101336",
+    "report_name": "분기보고서 (2016.09)",
+    "issue": "owners_identity_failed",
+    "status": "approved",
+    "expected_before": {
+      "equity": "312947293495",
+      "equity_tier": "T1_consolidated_owners",
+      "fiscal_period": "2016-09-30"
+    },
+    "set": {
+      "equity": "312010040516",
+      "equity_tier": "T1D_consolidated_total_less_nci",
+      "statement_type": "CFS",
+      "account_name": "자본총계-비지배지분",
+      "owners_resolution": "manual_override"
+    },
+    "evidence": {
+      "raw_path": "data/raw/opendart/original_collect/20261101T220713895061/20161114000077_document_4c12125018fd48adbdbd6075ce03e0cc-146.zip",
+      "sha256": "6c719903870ef96c7044a4444c640addd9a66d1f68a212f7a06e3b98f2538883",
+      "location": "/20161114000077.xml TABLE[79] R32-R39",
+      "note": "구성항목(R32-R36) 합 312,010,040,516 = 자본총계 = 자산-부채. 비지배 0. 소유주지분 행 312,947,293,495는 이익잉여금 행 값을 옮긴 것",
+      "dart_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20161114000077"
+    },
+    "decided_by": "사용자·Claude 원문 확인",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "EQ-0012",
+    "receipt_id": "20170331001759",
+    "corp_code": "00159795",
+    "report_name": "사업보고서 (2016.12)",
+    "issue": "owners_identity_failed",
+    "status": "approved",
+    "expected_before": {
+      "equity": "281885781663",
+      "equity_tier": "T1_consolidated_owners",
+      "fiscal_period": "2016-12-31"
+    },
+    "set": {
+      "equity": "316040818209",
+      "equity_tier": "T1D_consolidated_total_less_nci",
+      "statement_type": "CFS",
+      "account_name": "자본총계-비지배지분",
+      "owners_resolution": "manual_override"
+    },
+    "evidence": {
+      "raw_path": "data/raw/opendart/original_collect/20261101T220713895061/20170331001759_document_0741926f18414ad68b7a5f5f815cbe7a-19761.zip",
+      "sha256": "08657e889f4aebf1530c64b9b8ffb41184aeaaa68096ae3688a589a40dc72ab2",
+      "location": "170331001759_00761.xml TABLE[12] R41-R51",
+      "note": "당기 칸 소유주지분에 전기 값 281,885,781,663 기재. 비지배 '-'. 구성항목 합 = 자본총계",
+      "dart_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20170331001759"
+    },
+    "decided_by": "사용자·Claude 원문 확인",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "EQ-0013",
+    "receipt_id": "20200814002185",
+    "corp_code": "00186559",
+    "report_name": "반기보고서 (2020.06)",
+    "issue": "owners_identity_failed",
+    "status": "approved",
+    "expected_before": {
+      "equity": "96606692087",
+      "equity_tier": "T1_consolidated_owners",
+      "fiscal_period": "2020-06-30"
+    },
+    "set": {
+      "equity": "92341057798",
+      "equity_tier": "T1D_consolidated_total_less_nci",
+      "statement_type": "CFS",
+      "account_name": "자본총계-비지배지분",
+      "owners_resolution": "manual_override"
+    },
+    "evidence": {
+      "raw_path": "data/raw/opendart/original_collect/20261101T220713895061/20200814002185_document_0741926f18414ad68b7a5f5f815cbe7a-25283.zip",
+      "sha256": "a490943be03759a07b1ff12ad28c36e6f5a46374a7932fd7ff74f984de6575d4",
+      "location": "20200814002185.xml TABLE[55] R84-R97",
+      "note": "소유주지분 칸에 자본총계 기재. 구성항목 합 92,341,057,798 + 소수주주지분 4,265,634,289 = 자본총계. XBRL도 같은 오기",
+      "dart_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20200814002185"
+    },
+    "decided_by": "사용자·Claude 원문 확인",
+    "decided_at": "2026-11-03"
+  },
+  {
+    "id": "EQ-0014",
+    "receipt_id": "20201116001602",
+    "corp_code": "00186559",
+    "report_name": "분기보고서 (2020.09)",
+    "issue": "owners_identity_failed",
+    "status": "approved",
+    "expected_before": {
+      "equity": "96628781638",
+      "equity_tier": "T1_consolidated_owners",
+      "fiscal_period": "2020-09-30"
+    },
+    "set": {
+      "equity": "92457727064",
+      "equity_tier": "T1D_consolidated_total_less_nci",
+      "statement_type": "CFS",
+      "account_name": "자본총계-비지배지분",
+      "owners_resolution": "manual_override"
+    },
+    "evidence": {
+      "raw_path": "data/raw/opendart/original_collect/20261101T220713895061/20201116001602_document_0741926f18414ad68b7a5f5f815cbe7a-25312.zip",
+      "sha256": "50aa542b58073b2d0d39bd641adc8d65f08f987374bd886ea8a4e91e9384f1c5",
+      "location": "20201116001602.xml TABLE[56] R87-R100",
+      "note": "같은 유형. 구성항목 합 92,457,727,064 + 소수주주지분 4,171,054,574 = 자본총계",
+      "dart_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20201116001602"
+    },
+    "decided_by": "사용자·Claude 원문 확인",
+    "decided_at": "2026-11-03"
+  }
+]
