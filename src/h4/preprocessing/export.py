@@ -4,9 +4,9 @@ import json
 import hashlib
 import numpy as np
 import pandas as pd
-from .h4_epu import load_epu_index, align_epu_to_base_month, calculate_h4_epu_features
+from ..features.epu import load_epu_index, align_epu_to_base_month, calculate_h4_epu_features
 
-OUTPUT = 'data/processed/dan_h4_epu.parquet'
+OUTPUT = 'data/processed/h4_epu.parquet'
 
 def extra_feature_specs():
     # Keep monthly EPU variation and the interaction scale: do not rank these.
@@ -15,7 +15,7 @@ def extra_feature_specs():
 
 def export(root=Path.cwd()):
     root=Path(root).resolve()
-    mom=pd.read_parquet(root/'data/raw/mom.parquet')
+    mom=pd.read_parquet(root/'data/processed/mom.parquet')
     mom['base_month']=pd.PeriodIndex(mom.base_month,freq='M').astype(str)
     mom=mom[mom.base_month.between('2000-12','2021-11')].copy()
     mom['mom']=mom['mom'].where(mom.mom_available.eq(True))
@@ -30,8 +30,11 @@ def export(root=Path.cwd()):
     path=root/OUTPUT
     path.parent.mkdir(parents=True,exist_ok=True)
     result.to_parquet(path,index=False)
-    manifest=dict(definition='Cho-Kim (2023) Korean EPU(t-1), team raw 11-calendar-month MOM(t), product',source_page='https://policyuncertainty.com/korea_chokim.html',local_sheet='Korean New EPU Index',source_verified='local workbook attribution cites Cho and Kim (2023); download date and release vintages unverified',target_independent=True,raw_rows=len(result),available_rows=int(result.h4_available.sum()),extra_features=extra_feature_specs(),pit_verified=False,model_integration_tested=False,hashes={p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in ['data/raw/mom.parquet','data/raw/Korea_Overall_EPU.xlsx',OUTPUT]})
-    folder=root/'outputs/run_id/dan_review_20261116'
+    manifest=dict(definition='Cho-Kim (2023) Korean EPU(t-1), team raw 11-calendar-month MOM(t), product',source_page='https://policyuncertainty.com/korea_chokim.html',
+                  local_sheet='Korean New EPU Index',source_verified='local workbook attribution cites Cho and Kim (2023); download date and release vintages unverified',
+                  target_independent=True,raw_rows=len(result),available_rows=int(result.h4_available.sum()),extra_features=extra_feature_specs(),pit_verified=False,model_integration_tested=False,
+                  hashes={p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in ['data/processed/mom.parquet','data/raw/Korea_Overall_EPU.xlsx',OUTPUT]})
+    folder=root/'outputs/run_id/h4_input_export'
     folder.mkdir(parents=True,exist_ok=True)
     (folder/'model_input_manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
     return manifest

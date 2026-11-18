@@ -12,7 +12,7 @@ import pandas as pd
 import statsmodels.api as sm
 from scipy.stats import norm
 from statsmodels.stats.multitest import multipletests
-from .h4_epu import load_epu_index, align_epu_to_base_month, calculate_h4_epu_features
+from ..features.epu import load_epu_index, align_epu_to_base_month, calculate_h4_epu_features
 
 
 def holm(pvalues):
@@ -25,8 +25,8 @@ def holm(pvalues):
 
 
 def prepare(root, price_floor=1000):
-    mom = pd.read_parquet(root / 'data/raw/mom.parquet')
-    panel = pd.read_parquet(root / 'data/raw/panel.parquet')
+    mom = pd.read_parquet(root / 'data/processed/mom.parquet')
+    panel = pd.read_parquet(root / 'data/interim/panel.parquet')
     panel['month'] = pd.PeriodIndex(panel['month'], freq='M').astype(str)
     mom['base_month'] = pd.PeriodIndex(mom['base_month'], freq='M').astype(str)
     if panel.duplicated(['stock_id', 'month']).any():
@@ -90,14 +90,14 @@ def main():
     args = parser.parse_args()
     root = args.root.resolve()
     stamp = datetime.now().strftime('%Y%m%dT%H%M%S')
-    out = root / 'outputs/model_results/dan' / (stamp + '_h4_epu_ols-inference')
+    out = root / 'outputs/model_results/h4' / (stamp + '_h4_epu_ols-inference')
     out.mkdir(parents=True, exist_ok=False)
     data, counts = prepare(root)
     tables = {}
     for label, winsor in [('winsor_1_99', True), ('raw_sensitivity', False)]:
         tables[label + '_tests.csv'], tables[label + '_monthly_slopes.csv'] = inference(data, winsor)
-    hashes = {p: hashlib.sha256((root / p).read_bytes()).hexdigest() for p in ['data/raw/mom.parquet','data/raw/panel.parquet','data/raw/Korea_Overall_EPU.xlsx','src/team/dan/h4_epu.py','src/team/dan/h4_analysis.py']}
-    run = dict(author='dan', experiment='h4_epu', status='INFERENCE_ONLY_NOT_TEAM_MODEL_COMPARABLE', created_local=stamp, timezone='Asia/Seoul', counts=counts, hashes=hashes, git_head=subprocess.check_output(['git','rev-parse','HEAD'], cwd=root, text=True).strip(), versions={p: importlib.metadata.version(p) for p in ['pandas','numpy','scipy','statsmodels','pyarrow']}, conditions=dict(target_period=['2001-01','2021-12'], price_floor=1000, epu_lag_months=1, epu_definition='Cho-Kim (2023) Korean news-based EPU; user-supplied H4 specification', epu_source='https://policyuncertainty.com/korea_chokim.html', epu_availability='specified one-month lag; historical release dates and vintages unverified', epu_standardization='equal-weight observed months, ddof=1; descriptive inference only', panel='month fixed effects; EPU main effect absorbed; month-clustered normal asymptotic inference', two_stage='monthly y~const+mom; then slope~const+epu_z, HAC normal asymptotic one-sided gamma<0', primary='winsorized monthly mom and y at 1%,99%; not a forecast evaluation', sensitivity='unwinsorized', holm='pending full prespecified hypothesis family', rank_ic='not run: local common model_test and required common features absent', test_access=False))
+    hashes = {p: hashlib.sha256((root / p).read_bytes()).hexdigest() for p in ['data/processed/mom.parquet','data/interim/panel.parquet','data/raw/Korea_Overall_EPU.xlsx','src/h4/features/epu.py','src/h4/analysis/inference.py']}
+    run = dict(author='h4', experiment='h4_epu', status='INFERENCE_ONLY_NOT_TEAM_MODEL_COMPARABLE', created_local=stamp, timezone='Asia/Seoul', counts=counts, hashes=hashes, git_head=subprocess.check_output(['git','rev-parse','HEAD'], cwd=root, text=True).strip(), versions={p: importlib.metadata.version(p) for p in ['pandas','numpy','scipy','statsmodels','pyarrow']}, conditions=dict(target_period=['2001-01','2021-12'], price_floor=1000, epu_lag_months=1, epu_definition='Cho-Kim (2023) Korean news-based EPU; user-supplied H4 specification', epu_source='https://policyuncertainty.com/korea_chokim.html', epu_availability='specified one-month lag; historical release dates and vintages unverified', epu_standardization='equal-weight observed months, ddof=1; descriptive inference only', panel='month fixed effects; EPU main effect absorbed; month-clustered normal asymptotic inference', two_stage='monthly y~const+mom; then slope~const+epu_z, HAC normal asymptotic one-sided gamma<0', primary='winsorized monthly mom and y at 1%,99%; not a forecast evaluation', sensitivity='unwinsorized', holm='pending full prespecified hypothesis family', rank_ic='not run: local common model_test and required common features absent', test_access=False))
     if args.holm_family:
         family = json.loads(args.holm_family.read_text(encoding='utf-8'))
         expected = float(tables['winsor_1_99_tests.csv'].iloc[1].p_negative_one_sided)

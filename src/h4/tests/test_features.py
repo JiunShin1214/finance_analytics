@@ -1,8 +1,8 @@
 import unittest
 import numpy as np
 import pandas as pd
-from .h4_analysis import holm, inference
-from .h4_epu import align_epu_to_base_month, calculate_h4_epu_features
+from ..analysis.inference import holm, inference
+from ..features.epu import align_epu_to_base_month, calculate_h4_epu_features
 
 class H4Tests(unittest.TestCase):
     def test_calendar_lag_and_missing(self):
@@ -31,15 +31,16 @@ class H4Tests(unittest.TestCase):
         import tempfile
         from pathlib import Path
         from unittest.mock import patch
-        from .h4_export import export, extra_feature_specs, OUTPUT
+        from ..preprocessing.export import export, extra_feature_specs, OUTPUT
         mom=pd.DataFrame({'stock_id':['000001','000002'], 'base_month':['2001-01']*2,
                           'eligible':[True,True], 'mom':[.2,.9], 'mom_available':[True,False]})
         epu=pd.DataFrame({'epu_month':pd.PeriodIndex(['2000-12'],freq='M'),'epu_raw':[2.]})
-        with tempfile.TemporaryDirectory(dir=Path.cwd() / 'outputs/run_id') as folder:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
             root=Path(folder); (root/'data/raw').mkdir(parents=True)
-            mom.to_parquet(root/'data/raw/mom.parquet',index=False)
+            (root/'data/processed').mkdir(parents=True)
+            mom.to_parquet(root/'data/processed/mom.parquet',index=False)
             (root/'data/raw/Korea_Overall_EPU.xlsx').write_bytes(b'fixture')
-            with patch('src.team.dan.h4_export.load_epu_index',return_value=epu):
+            with patch('src.h4.preprocessing.export.load_epu_index',return_value=epu):
                 manifest=export(root)
             f=pd.read_parquet(root/OUTPUT)
             self.assertNotIn('y',f)

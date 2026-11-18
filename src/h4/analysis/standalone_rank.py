@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 from sklearn.linear_model import LinearRegression
-from .h4_epu import load_epu_index, align_epu_to_base_month, calculate_h4_epu_features
+from ..features.epu import load_epu_index, align_epu_to_base_month, calculate_h4_epu_features
 
 
 def monthly_ic(data, prediction):
@@ -26,8 +26,8 @@ def monthly_ic(data, prediction):
 
 def main(root=Path.cwd()):
     root=Path(root).resolve()
-    mom=pd.read_parquet(root/'data/raw/mom.parquet')
-    panel=pd.read_parquet(root/'data/raw/panel.parquet')
+    mom=pd.read_parquet(root/'data/processed/mom.parquet')
+    panel=pd.read_parquet(root/'data/interim/panel.parquet')
     mom['base_month']=pd.PeriodIndex(mom.base_month,freq='M').astype(str)
     panel['month']=pd.PeriodIndex(panel.month,freq='M').astype(str)
     if panel.duplicated(['stock_id','month']).any(): raise ValueError('duplicate panel keys')
@@ -75,16 +75,16 @@ def main(root=Path.cwd()):
         summary.append(dict(evaluation=name,mean_rank_ic=float(t.ic.mean()),monthly_ic_std=float(t.ic.std(ddof=1)),positive_month_fraction=float(t.ic.gt(0).mean()),months=int(t.ic.notna().sum()),stock_months=int(t.n.sum())))
     summary=pd.DataFrame(summary)
     stamp=datetime.now().strftime('%Y%m%dT%H%M%S')
-    out=root/'outputs/model_results/dan'/(stamp+'_h4_standalone_rank_ols')
+    out=root/'outputs/model_results/h4'/(stamp+'_h4_standalone_rank_ols')
     out.mkdir(parents=True,exist_ok=False)
-    files=['data/raw/mom.parquet','data/raw/panel.parquet','data/raw/Korea_Overall_EPU.xlsx','src/team/dan/h4_epu.py','src/team/dan/h4_standalone_rank.py']
-    run=dict(author='dan',status='EXPLORATORY_STANDALONE_NOT_TEAM_MODEL_TEST',target_validation='2006-01 to 2021-12',folds=16,training='2001 through validation_year-1; annual expanding; no tuning',model='OLS intercept + raw MOM + train-month-standardized lagged EPU + MOM*EPU_z',primary_metric='equal-weight mean monthly Spearman; average ties; n>=3; constant excluded not zero',filters='base-month eligible & mom_available, finite MOM/EPU/y; no price/size filter; no winsorization; no imputation',eligible_momentum_rows=before,finite_train_validation_rows=len(data),epu_lag_months=1,epu_release_dates='unverified; one-month lag is a proxy assumption',test_evaluated=False,team_common_functions_used=False,official_result=False,notes=['Raw positive monthly EPU*MOM ranks can equal MOM ranks; direct score is diagnostic only.','OLS EPU main effect and MOM main effect retained; no H1 comparison.','Target-month returns unavailable are excluded; coverage differs from official team scoring universe.','No claim of incremental value beyond H1 or confirmed H4 hypothesis.'],versions={p:importlib.metadata.version(p) for p in ['numpy','pandas','scipy','scikit-learn','pyarrow']},sha256={p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in files})
+    files=['data/processed/mom.parquet','data/interim/panel.parquet','data/raw/Korea_Overall_EPU.xlsx','src/h4/features/epu.py','src/h4/analysis/standalone_rank.py']
+    run=dict(author='h4',status='EXPLORATORY_STANDALONE_NOT_TEAM_MODEL_TEST',target_validation='2006-01 to 2021-12',folds=16,training='2001 through validation_year-1; annual expanding; no tuning',model='OLS intercept + raw MOM + train-month-standardized lagged EPU + MOM*EPU_z',primary_metric='equal-weight mean monthly Spearman; average ties; n>=3; constant excluded not zero',filters='base-month eligible & mom_available, finite MOM/EPU/y; no price/size filter; no winsorization; no imputation',eligible_momentum_rows=before,finite_train_validation_rows=len(data),epu_lag_months=1,epu_release_dates='unverified; one-month lag is a proxy assumption',test_evaluated=False,team_common_functions_used=False,official_result=False,notes=['Raw positive monthly EPU*MOM ranks can equal MOM ranks; direct score is diagnostic only.','OLS EPU main effect and MOM main effect retained; no H1 comparison.','Target-month returns unavailable are excluded; coverage differs from official team scoring universe.','No claim of incremental value beyond H1 or confirmed H4 hypothesis.'],versions={p:importlib.metadata.version(p) for p in ['numpy','pandas','scipy','scikit-learn','pyarrow']},sha256={p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in files})
     with zipfile.ZipFile(out/'result.zip','w',zipfile.ZIP_DEFLATED) as z:
         z.writestr('run.json',json.dumps(run,ensure_ascii=False,indent=2,allow_nan=False))
         z.writestr('summary.csv',summary.to_csv(index=False))
         z.writestr('folds.csv',pd.DataFrame(folds).to_csv(index=False))
         for name,t in tables.items():z.writestr(name+'_monthly_ic.csv',t.to_csv(index=False))
-        z.writestr('README.txt','Exploratory standalone H4 only; not official model_test or H1 comparison. No per-stock predictions or source data included. Run: python -m src.team.dan.h4_standalone_rank\n')
+        z.writestr('README.txt','Exploratory standalone H4 only; not official model_test or H1 comparison. No per-stock predictions or source data included. Run: python -m src.h4.analysis.standalone_rank\n')
     summary.to_csv(out/'summary.csv',index=False)
     print(out/'result.zip')
     print(summary.to_string(index=False))
