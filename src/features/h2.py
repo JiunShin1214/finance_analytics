@@ -1,7 +1,7 @@
-"""H2 특징표: 팀원(src/h2/)이 만든 CSV 2개 → data/processed/h2.parquet (종목 × 기준월).
+"""H2 특징표: Hybrid(DART 공시일 우선 + DataGuide 6개월 지연 보완) + 정책 CSV + 공통 패널 → h2.parquet.
 
 정의는 팀원 구현 그대로다(2026-11-15 결정, 팀원 코드는 수정하지 않고 함수만 가져다 쓴다).
-- debt          = proxy_masked(DataGuide 연간 부채비율, 결산+6개월 공개 가정, 12월 결산 기업만)를
+- debt          = 선택한 원천의 부채비율(기본: DART Hybrid, 선택: DataGuide 6개월 지연)을
                   기준월마다 적격 종목 안에서 1%/99% 윈저 → z(ddof=0). src/h2/features/transforms.monthly_standardize.
 - policy        = monthly.csv final_rule_v2_sensitivity(한국은행 통화정책방향 문장 규칙 점수, 월 공통, −1~1).
 - policy_x_debt = policy × debt.
@@ -12,13 +12,22 @@ model_test에서 debt·policy_x_debt는 우리 월별 순위 변환의 예외다
 입력은 data/ 파일과 config뿐이며 이전 실행 기록을 읽지 않는다. 기준월 2021-12 행(목표월 2022-01, 테스트 기간)은 버린다.
 
 실행: python -m src.features.h2            (검사만, 쓰지 않음)
-      python -m src.features.h2 --execute  (h2.parquet 쓰기, 있으면 같은 내용인지 비교만)
+      python -m src.features.h2 --execute  (Hybrid 생성, 기존 결과가 다르면 보호 오류)
+      python -m src.features.h2 --execute --replace  (기존 결과 백업 후 Hybrid 갱신)
+      python -m src.features.h2 --debt-source lag_6m  (이전 6개월 지연 방식 검사)
+
+주의: Hybrid는 완전히 검증된 historical PIT 자료가 아닌 후보 데이터다.
+출력 파일 이름과 열은 동일하나 원천이 다르면 값이 달라질 수 있다.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import os
+import shutil
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -32,6 +41,11 @@ DEBT_COLUMNS = ['stock_id', 'feature_month', 'target_month', 'proxy_masked', 'fi
                 'fiscal_end_leak', 'proxy_date_leak', 'lag_months']
 POLICY_COLUMNS = ['month', 'final_rule_v2_sensitivity', 'sensitivity_source_document_id', 'sensitivity_source_release_date']
 OUTPUT_COLUMNS = ['stock_id', 'base_month', 'eligible', 'debt_raw', 'debt', 'policy', 'policy_x_debt']
+DEFAULT_HYBRID_CSV = Path('data/processed/final/debt_hybrid/h2_debt_hybrid_candidate_2001_2021.csv')
+HYBRID_COLUMNS = ('stock_id', 'feature_month', 'debt_final_raw', 'source_type',
+                  'source_available_date', 'source_fiscal_date')
+HYBRID_DART = 'DART_FIRST_FILED_CANDIDATE'
+HYBRID_FALLBACK = 'DATAGUIDE_6M_PROXY'
 
 
 def sha256(path) -> str:
@@ -80,6 +94,86 @@ def read_debt(path) -> pd.DataFrame:
     return d
 
 
+
+def read_hybrid_debt(path) -> pd.DataFrame:
+    """Hybrid 결과를 검증하고 기존 H2 부채 입력과 동일한 열 구조로 변환한다.
+
+    DART 후보/6개월 지연 대체값 모두 공개일·결산일이 예측 기준월 말보다 늦으면 거부한다.
+    재무수치 자체의 역사적 vintage(PIT) 검증을 보장하지는 않는다.
+    """
+    d = pd.read_csv(path, dtype={'stock_id': 'string', 'feature_month': 'string'},
+                    encoding='utf-8-sig', low_memory=False)
+    missing = set(HYBRID_COLUMNS) - set(d.columns)
+    if missing:
+        raise ValueError('h2_hybrid_columns_missing:' + ','.join(sorted(missing)))
+    d['stock_id'] = (d.stock_id.str.strip()
+                     .str.replace(r'^A(?=\d{6}$)', '', regex=True)
+                     .str.replace(r'\.0$', '', regex=True))
+    if not d.stock_id.str.fullmatch(r'\d{1,6}', na=False).all():
+        raise ValueError('h2_hybrid_stock_id_invalid')
+    d['stock_id'] = d.stock_id.str.zfill(6)
+    if not d.feature_month.str.fullmatch(r'\d{4}-(0[1-9]|1[0-2])', na=False).all():
+        raise ValueError('h2_hybrid_feature_month_invalid')
+    if d.duplicated(['stock_id', 'feature_month']).any():
+        raise ValueError('h2_hybrid_duplicate_keys')
+    if 'target_month' in d.columns:
+        expected = (pd.PeriodIndex(d.feature_month, freq='M') + 1).astype(str)
+        if not expected.equals(pd.Index(d.target_month.astype(str))):
+            raise ValueError('h2_hybrid_target_not_next_month')
+
+    raw = pd.to_numeric(d.debt_final_raw, errors='raise').astype(float)
+    if np.isinf(raw.to_numpy()).any():
+        raise ValueError('h2_hybrid_infinite_values')
+    active = raw.notna()
+    source = d.source_type.astype('string')
+    if (active & ~source.isin([HYBRID_DART, HYBRID_FALLBACK]).fillna(False)).any():
+        raise ValueError('h2_hybrid_unknown_source_type')
+
+    end = _month_end(d.feature_month)
+    if 'prediction_date' in d.columns:
+        prediction = pd.to_datetime(d.prediction_date, errors='coerce')
+        if prediction.isna().any() or not prediction.eq(end).all():
+            raise ValueError('h2_hybrid_prediction_date_not_month_end')
+    for col in ('source_available_date', 'source_fiscal_date'):
+        when = pd.to_datetime(d[col], errors='coerce')
+        if when[active].isna().any() or when[active].gt(end[active]).any():
+            raise ValueError('h2_hybrid_future_or_missing_' + col)
+        if col == 'source_fiscal_date' and not (
+            (when[active].dt.month == 12) & (when[active].dt.day == 31)
+        ).all():
+            raise ValueError('h2_hybrid_non_december_fiscal_year')
+
+    # 후속 공시 플래그는 기업·월에 후보가 존재했다는 감사 정보이며,
+    # 실제 선택된 DART 후보가 사용 시점에 유효하지 않다는 뜻은 아니다.
+    dart_selected = active & source.eq(HYBRID_DART).fillna(False)
+    if 'dart_next_filing_date' not in d.columns:
+        raise ValueError('h2_hybrid_missing_dart_next_filing_date')
+    next_raw = d['dart_next_filing_date'].astype('string').str.strip()
+    next_date = pd.to_datetime(next_raw, errors='coerce')
+    invalid_next_date = (dart_selected & next_raw.notna()
+                         & next_raw.ne('') & next_date.isna())
+    if invalid_next_date.any():
+        raise ValueError('h2_hybrid_invalid_dart_next_filing_date')
+    cutoff = pd.to_datetime(d['prediction_date'], errors='coerce') if 'prediction_date' in d.columns else end
+    invalid_selected = dart_selected & next_date.notna() & next_date.le(cutoff)
+    if invalid_selected.any():
+        raise ValueError(f'h2_hybrid_selected_dart_superseded:{int(invalid_selected.sum())}')
+
+    if 'has_unresolved_followup' in d.columns:
+        unresolved = (d['has_unresolved_followup'].astype('string')
+                      .str.lower().isin(['true', '1', 'yes']))
+        flagged = dart_selected & unresolved
+        if flagged.any():
+            print(f'[H2 Hybrid] 미해결 후속공시 플래그 DART 사용 행: '
+                  f'{int(flagged.sum()):,}건 (선택 공시의 후속 접수일 조건은 통과)')
+
+    # downstream 월별 표준화에 입력하는 이름을 기존과 동일하게 유지
+    return pd.DataFrame({
+        'stock_id': d.stock_id,
+        'feature_month': d.feature_month,
+        'proxy_masked': raw,
+    })
+
 def read_policy(path) -> pd.DataFrame:
     """정책 CSV 읽기·검사: 월당 한 줄, 점수 −1~1, 발표일 < 기준월 말일(말일 발표는 다음 달부터, 팀원 규칙)."""
     m = pd.read_csv(path, dtype={'month': 'string'}, encoding='utf-8-sig')
@@ -99,11 +193,26 @@ def read_policy(path) -> pd.DataFrame:
     return m
 
 
-def build_h2(root: Path, config) -> tuple[pd.DataFrame, dict]:
-    """CSV 2개 + 우리 패널(적격) → H2 특징표(메모리)와 검사 기록."""
+def build_h2(root: Path, config, *, debt_source: str = 'hybrid',
+             hybrid_csv: Path | str | None = None) -> tuple[pd.DataFrame, dict]:
+    """공통 패널 적격 표본에서 H2 특징표를 계산한다. Hybrid가 기본값."""
+    root = Path(root)
     paths = config['PATHS']
-    debt_path, policy_path, panel_path = (root / paths[k] for k in ('h2_debt_csv', 'h2_monthly_csv', 'panel'))
-    debt, policy = read_debt(debt_path), read_policy(policy_path)
+    policy_path, panel_path = (root / paths[k] for k in ('h2_monthly_csv', 'panel'))
+    if debt_source == 'lag_6m':
+        debt_path = root / paths['h2_debt_csv']
+        debt = read_debt(debt_path)
+    elif debt_source == 'hybrid':
+        configured = hybrid_csv if hybrid_csv is not None else paths.get('h2_hybrid_csv', DEFAULT_HYBRID_CSV)
+        debt_path = Path(configured)
+        if not debt_path.is_absolute():
+            debt_path = root / debt_path
+        if not debt_path.is_file():
+            raise FileNotFoundError(f'H2 Hybrid 입력 CSV 없음: {debt_path}')
+        debt = read_hybrid_debt(debt_path)
+    else:
+        raise ValueError('invalid_h2_debt_source:' + str(debt_source))
+    policy = read_policy(policy_path)
     panel = pd.read_parquet(panel_path, columns=['stock_id', 'month', 'eligible'])
     if not panel.month.between('2000-01', '2021-12').all():
         raise PermissionError('development_months_only')
@@ -145,11 +254,27 @@ def build_h2(root: Path, config) -> tuple[pd.DataFrame, dict]:
         'debt_monthly_mean_abs_max': float(out.groupby('base_month').debt.mean().abs().max()),
         'debt_monthly_std_ddof0_range': [float(x) for x in out.groupby('base_month').debt.std(ddof=0).agg(['min', 'max'])],
     }
-    record = {'inputs_sha256': {paths[k]: sha256(root / paths[k]) for k in ('h2_debt_csv', 'h2_monthly_csv', 'panel')},
-              'definition': 'teammate src/h2: debt=monthly_standardize(proxy_masked) (1/99 winsor, z ddof=0, eligible rows), '
-                            'policy=final_rule_v2_sensitivity, policy_x_debt=policy*debt',
-              'code_sha256': {p: sha256(CODE_ROOT / p) for p in ('src/features/h2.py', 'src/h2/features/transforms.py')},
-              'checks': checks}
+    if debt_source == 'lag_6m':
+        # 기존 기록 형식도 유지하여 과거 6개월 지연 실험과 비교 가능하게 한다.
+        record = {'inputs_sha256': {paths[k]: sha256(root / paths[k]) for k in ('h2_debt_csv', 'h2_monthly_csv', 'panel')},
+                  'definition': 'teammate src/h2: debt=monthly_standardize(proxy_masked) (1/99 winsor, z ddof=0, eligible rows), '
+                                'policy=final_rule_v2_sensitivity, policy_x_debt=policy*debt',
+                  'code_sha256': {p: sha256(CODE_ROOT / p) for p in ('src/features/h2.py', 'src/h2/features/transforms.py')},
+                  'checks': checks}
+    else:
+        try:
+            displayed_path = str(debt_path.relative_to(root))
+        except ValueError:
+            displayed_path = str(debt_path)
+        record = {'inputs_sha256': {displayed_path: sha256(debt_path),
+                                    paths['h2_monthly_csv']: sha256(policy_path),
+                                    paths['panel']: sha256(panel_path)},
+                  'debt_source': 'hybrid',
+                  'full_historical_pit_verified': False,
+                  'definition': 'debt=monthly_standardize(debt_final_raw) (1/99 winsor, z ddof=0, eligible rows), '
+                                'policy=final_rule_v2_sensitivity, policy_x_debt=policy*debt',
+                  'code_sha256': {p: sha256(CODE_ROOT / p) for p in ('src/features/h2.py', 'src/h2/features/transforms.py')},
+                  'checks': checks}
     return out, record
 
 
@@ -169,26 +294,67 @@ def same_table(a: pd.DataFrame, b: pd.DataFrame) -> bool:
     return True
 
 
-def ensure_h2(root: Path, config, *, execute: bool = False, log=print) -> dict:
-    """h2.parquet를 만든다(없을 때, execute=True) 또는 있는 파일이 다시 계산한 값과 같은지 확인한다(다르면 멈춤)."""
+def ensure_h2(root: Path, config, *, execute: bool = False, log=print,
+              debt_source: str = 'hybrid', hybrid_csv: Path | str | None = None,
+              replace: bool = False) -> dict:
+    """출력은 언제나 PATHS.h2. 차이가 나면 자동 덮어쓰기 금지.
+
+    기존 lag_6m은 원래의 결과 동일성 검사 정책을 유지한다.
+    Hybrid는 --execute --replace 조합일 때만 다른 기존 parquet을 백업하고 교체한다.
+    """
     root = Path(root)
-    out, record = build_h2(root, config)
+    if replace and (debt_source != 'hybrid' or not execute):
+        raise ValueError('replace_requires_hybrid_and_execute')
+    out, record = build_h2(root, config, debt_source=debt_source, hybrid_csv=hybrid_csv)
     target = root / config['PATHS']['h2']
     if target.exists():
-        if not same_table(pd.read_parquet(target), out):
-            raise ValueError(f'h2_parquet_differs_from_recomputed:{target}')
-        record['status'] = 'EXISTS_SAME'
+        match = same_table(pd.read_parquet(target), out)
+        if match:
+            record['status'] = 'EXISTS_SAME'
+        elif debt_source == 'hybrid' and not execute:
+            record['status'] = 'DIFFERS_DRY_RUN'
+        elif debt_source == 'hybrid' and replace:
+            record['status'] = 'REPLACED_AFTER_BACKUP'
+        else:
+            raise ValueError(f'h2_parquet_differs_from_recomputed:{target} (입력 원천이 다른 경우 자동 덮어쓰기 금지)')
     elif execute:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        out.to_parquet(target, index=False)
         record['status'] = 'WRITTEN'
     else:
         record['status'] = 'DRY_RUN_NOT_WRITTEN'
+
+    if execute and record['status'] in ('WRITTEN', 'REPLACED_AFTER_BACKUP'):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # 이미 존재하는 h2.parquet을 수정할 때는 기존 버전을 백업한다.
+        if target.exists():
+            backup_dir = target.parent / '_h2_backups'
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+            backup = backup_dir / f'h2_{timestamp}.parquet'
+            shutil.copy2(target, backup)
+            record['backup'] = str(backup)
+
+        # 출력 검증을 완료한 뒤 원자적으로 교체해 중간 실패 시 파일 손상 방지.
+        with tempfile.NamedTemporaryFile(suffix='.parquet', dir=target.parent, delete=False) as tmp:
+            temporary = Path(tmp.name)
+        try:
+            out.to_parquet(temporary, index=False)
+            if not same_table(pd.read_parquet(temporary), out):
+                raise ValueError('h2_parquet_roundtrip_mismatch')
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+        if debt_source == 'hybrid':
+            # 생성 원천이 무엇인지 알 수 있도록 같은 위치에 실행 기록 남김.
+            manifest = target.with_suffix('.manifest.json')
+            record['manifest'] = str(manifest)
+            record['output_sha256'] = sha256(target)
+            manifest.write_text(json.dumps(record, ensure_ascii=False, indent=2, default=str), encoding='utf-8')
+
     record['output'] = config['PATHS']['h2']
     if target.exists():
         record['output_sha256'] = sha256(target)
     c = record['checks']
-    log(f"H2 {record['status']}: {c['rows']:,}행(적격, 기준월 {c['base_months'][0]}~{c['base_months'][1]}), "
+    log(f"H2 {record['status']} ({debt_source}): {c['rows']:,}행(적격, 기준월 {c['base_months'][0]}~{c['base_months'][1]}), "
         f"부채 있는 행 {c['eligible_rows_with_debt']:,} ({c['eligible_rows_with_debt_share']:.1%}), "
         f"부채 값 중 적격 행에 붙은 비율 {c['debt_values_matched_share']:.1%}, 정책 {c['policy_months']}개월")
     return record
@@ -199,10 +365,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='H2 특징표(data/processed/h2.parquet)')
     parser.add_argument('--config', default='config/experiment.yaml')
     parser.add_argument('--execute', action='store_true')
+    parser.add_argument('--debt-source', choices=['lag_6m', 'hybrid'], default='hybrid')
+    parser.add_argument('--hybrid-csv', type=Path, default=None)
+    parser.add_argument('--replace', action='store_true', help='Hybrid 실행 시 다른 기존 h2.parquet 백업 후 교체')
     args = parser.parse_args(argv)
     root = Path.cwd()
     config = yaml.safe_load((root / args.config).read_text(encoding='utf-8'))
-    record = ensure_h2(root, config, execute=args.execute)
+    record = ensure_h2(root, config, execute=args.execute, debt_source=args.debt_source,
+                       hybrid_csv=args.hybrid_csv, replace=args.replace)
     print(json.dumps(record, ensure_ascii=False, indent=2, default=str))
 
 
