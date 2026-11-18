@@ -35,16 +35,13 @@ python -m pip install -r src/h4/requirements.txt
 - `data/processed/mom.parquet`: 팀의 원 MOM, H4 생성에 사용
 - `data/raw/Korea_Overall_EPU.xlsx`: `Korean New EPU Index` 시트
 
-## H4 입력 파일 전달
+## H4 입력
 
-팀원에게 전달할 파일명은 **`data/processed/h4_epu.parquet`**다.
-이전에 전달한 `dan_h4_epu.parquet`와 2026-11-18 이름 변경 시점의 내용은 동일하다.
-기존 이름의 로컬 사본은 이전 실행과 중단된 작업을 위해 보존한다.
-코드는 앞으로 `h4_epu.parquet`를 사용한다.
+파일: `data/processed/h4_epu.parquet`
 
 열: `stock_id`, `base_month`, `mom`, `epu_month`, `epu_raw`,
 `h4_interaction`, `h4_available`, `h4_exclusion_reason`.
-기준월 2000-12~2021-11, 목표수익률 없음. 기존 생성본은 174,952행이다.
+기준월 2000-12~2021-11, 목표수익률 없음.
 기준월 t에는 EPU(t-1)를 연결하고 상호작용은 원 MOM × EPU로 만든다.
 
 파일이 이미 있으면 생성 명령은 생략한다. 재생성 명령은 기존 H4 파일을 덮어쓴다.
@@ -87,7 +84,6 @@ Ridge 입력 준비를 호출한다. 입력 파일을 자동 재생성하지 않
 원수익률·전체 표본: 평균 IC 0.082221 → 0.081415, ICIR 0.770300 → 0.766166.
 H4 추가로 소폭 하락했으며, 이를 다른 모델이나 최종 테스트 결과로 일반화하지 않는다.
 저장 당시 예측값의 월별 IC 2,304개를 SciPy로 독립 검산했다.
-과거 실행 ZIP/해시는 당시 기록이며 이후 코드 정리본과 코드 해시가 다를 수 있다.
 
 ## 직접 특징 분석과 테스트
 
@@ -101,6 +97,3 @@ python -m unittest src.h4.tests.test_features src.h4.tests.test_ridge -v
 `analysis/inference.py`는 별도의 패널 OLS·HAC 탐색 분석이고, `analysis/standalone_rank.py`는 이전 단독 OLS 실험이다.
 
 EPU 과거 공표 시점·개정 이력은 별도 검증 대상이다. 전월 연결만으로 완전한 실시간 빈티지 검증을 뜻하지 않는다.
-이번 공유 범위에 미완료 LightGBM/XGBoost 코드는 포함하지 않는다.
-
-기존 개인 경로의 구현을 `src/h4/`로 옮겼다. 실행 시 위 새 명령을 사용한다. 호환용 복제본은 두지 않는다.
