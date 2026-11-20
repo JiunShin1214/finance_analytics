@@ -33,7 +33,9 @@ def feature_specs(config, family: str) -> dict:
     base = paths['base_features']
     specs = {n: {'path': base, 'transform': 'input'} for n in STOCK_FEATURES}
     specs.update({n: {'path': paths['h2'], 'transform': 'none'} for n in ('debt', 'policy_x_debt')})   # 팀원 z 그대로(H2 규칙)
-    specs['h4_interaction'] = {'path': paths['h4'], 'transform': 'input'}
+    # Mom × EPU는 값 그대로(팀원 H4 규칙). EPU가 그 달 모든 종목에 같아서 매달 순위·z로 바꾸면 Mom의 순위·z와 똑같아져
+    # 상호작용 정보가 사라지고 mom과 완전히 같은 열이 된다(2026-11-21 첫 실행에서 Huber 행렬 특이로 발견).
+    specs['h4_interaction'] = {'path': paths['h4'], 'transform': 'none'}
     if family == 'boosting':
         specs.update({n: {'path': base, 'transform': 'none'} for n in MARKET_FEATURES})   # 월 공통: 값 그대로
         specs['policy'] = {'path': paths['h2'], 'transform': 'none'}
@@ -58,10 +60,26 @@ def prepare(root: Path, config, family: str, *, input_transform: str, h3_grid=No
                                  input_transform=input_transform, fill_missing=True,
                                  exclude_train_target_months=mi['exclude_train_target_months'])
     prepared['family'] = family
+    check_duplicate_columns(prepared, family)
     c = prepared['checks']
     log(f"전처리 {time.perf_counter() - t0:.0f}초 ({family}, 변환 {input_transform}): 학습 행 {c['training_rows']:,}, "
         f"검증 예측 행 {c['validation_prediction_rows']:,}, 제외 목표월 {c.get('excluded_train_target_months')}")
     return prepared
+
+
+def check_duplicate_columns(prepared: dict, family: str) -> None:
+    """세트 안에 학습 행에서 완전히 같은 입력 열이 있으면 멈춘다(변환 때문에 정보가 사라진 열을 잡기 위해)."""
+    import numpy as np
+    d = prepared['data']
+    rows = d.train.to_numpy(bool)
+    label = prepared['sigma_labels'][0]
+    for name, cols in input_sets(family).items():
+        xs = {c: d['x_sigma_' + label if c == 'sigma' else 'x_' + c].to_numpy(float)[rows] for c in cols}
+        keys = list(xs)
+        for i, a in enumerate(keys):
+            for b in keys[i + 1:]:
+                if np.array_equal(xs[a], xs[b]):
+                    raise ValueError(f'duplicate_input_columns:{name}:{a}={b}')
 
 
 def _sha(path: Path) -> str:

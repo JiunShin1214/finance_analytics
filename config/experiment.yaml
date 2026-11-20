@@ -154,6 +154,7 @@ H4:
   # 2026-11-21: 팀원 산출 data/processed/h4_epu_current.parquet 사용. 기준월 t에 EPU(t)를 붙임(팀원 의도, main 코드·README의 t−1과 다름).
   # 한계: EPU(t)는 t월 기사로 만들지만 지수 공표는 t월 이후일 수 있어 PIT 논란 가능 → 보고서에 명시, t−1 버전 강건성 점검은 선택.
   definition: {epu: 'epu_raw (월 공통, 기준월 t에 EPU(t))', interaction: 'h4_interaction = mom × epu_raw'}
+  model_input_transform: none   # 두 열 모두 값 그대로(팀원 README). 월별 순위·z로 바꾸면 h4_interaction이 mom과 같아짐(EPU가 월 공통)
   search_spec: null
   uncertainty_lexicon: null
   matching_spec: null
