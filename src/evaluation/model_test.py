@@ -127,11 +127,13 @@ def monthly_target_transforms(y: pd.Series, train: np.ndarray, months: pd.Series
 
 
 def build_model_data(comp: pd.DataFrame, sigma_grid: pd.DataFrame, returns: pd.DataFrame, labels: list[str], *, units,
-                     input_transform: str = 'rank') -> pd.DataFrame:
+                     input_transform: str = 'rank', fill_missing: bool = False) -> pd.DataFrame:
     """특징(기준월 2000-12~2021-11)·λ별 σ·개발 수익률 → 종목×목표월 모델 입력(메모리).
 
     순위 입력은 매달 적격·산출 종목 안에서, 목표값 3종은 그 목표월 학습 행 안에서 만든다(목표값은 입력을 다 만든 뒤 결합).
     train = 적격이고 H1 구성요소 3개·σ·목표값이 모두 있는 행(조합 간 공통), predict = 목표값(다음 달 수익률)이 있는 행.
+    fill_missing=True(2026-11-21 사용자 예외, 교수님 확인 전): 관측값으로 순위·z를 만든 뒤 빈 입력을 0(= 그 달 횡단면 평균)으로
+    채우고 학습에도 쓴다. train = 적격이고 목표값이 있는 행 [Chen·McCoy 2024 JFE, GKX 2020].
     """
     from src.preprocessing.panel import join_training_targets
     keys = ['stock_id', 'base_month']
@@ -158,7 +160,12 @@ def build_model_data(comp: pd.DataFrame, sigma_grid: pd.DataFrame, returns: pd.D
     for x in labels:
         data['x_sigma_' + x] = transform_input(d['sigma_' + x], avail['sigma'], months, input_transform)
     data['h1_available'] = avail['size'] & avail['bm'] & avail['mom']
-    data['train'] = data.h1_available.to_numpy() & avail['sigma'] & d.y.notna().to_numpy()
+    if fill_missing:
+        xcols = [c for c in data.columns if c.startswith('x_')]
+        data[xcols] = data[xcols].fillna(0.0)
+        data['train'] = elig & d.y.notna().to_numpy()
+    else:
+        data['train'] = data.h1_available.to_numpy() & avail['sigma'] & d.y.notna().to_numpy()
     data['predict'] = d.y.notna().to_numpy()
     for name, arr in monthly_target_transforms(d.y, data.train.to_numpy(), data.target_month).items():
         data['t_' + name] = arr
@@ -200,12 +207,15 @@ def load_extra_feature(root: Path, name: str, path, *, column: str | None = None
 
 
 def add_extra_features(data: pd.DataFrame, features: dict, *, transforms: dict | None = None,
-                       train_start_year: int | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+                       train_start_year: int | None = None, input_transform: str = 'rank',
+                       fill_missing: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
     """특징 표들을 붙인다: 매달 적격·관측 종목 안 순위 [−1, 1](x_<이름>). transforms[이름] = 'none'이면 값 그대로(순위 변환 예외,
     config H2.model_test). 학습 행은 새 특징까지 모두 관측된 행만(2026-11-15 결정 A, 교수님 지침 "학습은 관측값만"), 예측 행은
     그대로(빈 특징은 예측 때 0). 학습 행이 바뀌므로 목표값 변환(윈저·월별 표준화·10분위·백분위)을 관측 행 안에서 다시 만든다.
     observed = 새 특징까지 관측된 모든 해의 행(붙인 지수 ①의 학습용). train_start_year를 주면 ②의 학습 행(train)은 그 목표연도부터
     (H2: 2004, 2026-11-15 결정). 기존 학습 행·목표값은 base_train·base_t_<목표값>으로 남긴다(H1 지수 ①은 기존 행 그대로).
+    transforms[이름]: 'rank'(기본) | 'none' | 'input'(= input_transform) | 'zscore' | 'winsor_zscore' (매달 적격·관측 종목 안).
+    fill_missing=True면 변환 뒤 빈 값을 0(그 달 평균)으로 채우고 학습 행을 줄이지 않는다(build_model_data와 같은 예외).
     반환: (새 표, 연도별 관측 비율 표)."""
     d = data.copy()
     transforms = transforms or {}
@@ -218,13 +228,18 @@ def add_extra_features(data: pd.DataFrame, features: dict, *, transforms: dict |
     for name, f in features.items():
         merged = d[['stock_id', 'base_month']].merge(f, on=['stock_id', 'base_month'], how='left', validate='one_to_one')
         avail = merged[name].notna().to_numpy() & elig
-        if transforms.get(name, 'rank') == 'none':
-            d['x_' + name] = np.where(avail, merged[name].to_numpy(float), np.nan)
+        how = transforms.get(name, 'rank')
+        how = input_transform if how == 'input' else how
+        if how == 'none':
+            x = np.where(avail, merged[name].to_numpy(float), np.nan)
+        elif how == 'rank':
+            x = rank_pm1(merged[name], avail, d.base_month)
         else:
-            d['x_' + name] = rank_pm1(merged[name], avail, d.base_month)
+            x = transform_input(merged[name], avail, d.base_month, how)
+        d['x_' + name] = np.where(np.isfinite(x), x, 0.0) if fill_missing else x
         d[name + '_available'] = avail
         before = d.train.to_numpy(bool)
-        d['train'] = before & avail
+        d['train'] = before if fill_missing else before & avail
         for y_, g in d.groupby('year'):
             coverage.append({'feature': name, 'target_year': int(y_), 'predict_rows': int(g.predict.sum()),
                              'available_share_of_predict': float((g.predict & g[name + '_available']).sum() / max(1, g.predict.sum())),
@@ -238,13 +253,16 @@ def add_extra_features(data: pd.DataFrame, features: dict, *, transforms: dict |
 
 
 def prepare_inputs(root: Path, config, *, h3_grid: pd.DataFrame | None = None, extra_features: dict | None = None,
-                   indexes: dict | None = None, train_start_year: int | None = None, input_transform: str = 'rank') -> dict:
+                   indexes: dict | None = None, train_start_year: int | None = None, input_transform: str = 'rank',
+                   fill_missing: bool = False, exclude_train_target_months=None) -> dict:
     """공유 표 3개(+ 특징 파일)만 읽어 메모리 입력을 만든다. 반환 dict: data(종목×월 표), sigma_labels, checks(행 수 등 정보).
 
     extra_features = {이름: 'data/processed/<파일>.parquet' 또는 {'path', 'column', 'transform'}}. 주면 학습 행이 새 특징까지
     관측된 행으로 줄어든다(예측 행은 그대로). 한 파일에서 여러 열을 받을 수 있다(파일은 한 번만 읽고 해시도 한 번).
     indexes = {'<이름>_index': {'parts': [특징…], 'transform': 'rank'|'centered_raw'}}: 붙인 특징으로 만드는 지수형 지수(①).
     train_start_year: ② 학습 시작 목표연도. H2는 h2_inputs(config)가 세 인자를 config에서 만든다.
+    fill_missing: 빈 입력을 0(그 달 평균)으로 채워 학습에도 쓴다(2026-11-21 예외, build_model_data). exclude_train_target_months:
+    학습·내부 검증에서 뺄 목표월(예: 시장 변동성 12개월 창이 안 찬 2001-01·02). 예측·채점 행은 그대로.
     """
     check_no_test(config)
     verify_no_test_access(stage='validate', declared_target_years=list(range(2001, 2022)), source_scope_verified=True)
@@ -260,8 +278,10 @@ def prepare_inputs(root: Path, config, *, h3_grid: pd.DataFrame | None = None, e
     labels = list(cand['label'])
     g = h3_grid.sort_values(['stock_id', 'base_month']).reset_index(drop=True)
     data = build_model_data(comp, g, panel[['stock_id', 'month', 'return']], labels, units=config['UNITS'],
-                            input_transform=input_transform)
+                            input_transform=input_transform, fill_missing=fill_missing)
     checks = {'input_transform': input_transform}
+    if fill_missing:
+        checks['missing_fill'] = 'cross_sectional_mean_zero_after_transform_train_and_predict (user exception 2026-11-21, professor not yet confirmed)'
     coverage = pd.DataFrame()
     specs = {n: feature_spec(s) for n, s in (extra_features or {}).items()}
     indexes = {n: {'parts': list(s['parts']), 'transform': s.get('transform', 'rank')} for n, s in (indexes or {}).items()}
@@ -269,7 +289,14 @@ def prepare_inputs(root: Path, config, *, h3_grid: pd.DataFrame | None = None, e
         files = {s['path']: pd.read_parquet(root / _data_path(s['path'])) for s in specs.values()}
         feats = {n: load_extra_feature(root, n, s['path'], column=s.get('column'), frame=files[s['path']]) for n, s in specs.items()}
         data, coverage = add_extra_features(data, feats, transforms={n: s['transform'] for n, s in specs.items()},
-                                            train_start_year=train_start_year)
+                                            train_start_year=train_start_year, input_transform=input_transform,
+                                            fill_missing=fill_missing)
+    if exclude_train_target_months:
+        drop = data.target_month.isin(list(exclude_train_target_months)).to_numpy()
+        data['train'] = data.train.to_numpy(bool) & ~drop
+        for name, arr in monthly_target_transforms(data.y, data.train.to_numpy(), data.target_month).items():
+            data['t_' + name] = arr
+        checks['excluded_train_target_months'] = sorted(exclude_train_target_months)
     val = data[data.predict & data.year.between(2006, 2021)]
     start = int(config['MODEL_GRID'].get('train_start_target_year', TRAIN_START))
     checks.update(validation_prediction_rows=int(len(val)), train_start_target_year=start,
@@ -1031,6 +1058,23 @@ def _run_fold_boosting(fold: dict) -> dict:
                                **{'gain_' + c: s for c, s in zip(cols, share)}})
             inner.append(pd.DataFrame(table).assign(**tag))
             curves += [_curve_record(tag, x['fitted'], part='fold', fold=fold['fold'], h3_label=x['h3_label']) for x in fits]
+            for n_fix in p.get('fixed_trees') or ():
+                # 트리 수 고정(2026-11-17·21 결정): 같은 학습에서 n_fix개 트리로 예측. H3 λ는 트리 n_fix 지점 내부 검증 IC로 고름
+                # (동률이면 긴 기간). 해마다 선택 결과와 같은 표에 hparams 끝 _t<n>으로 구분한다.
+                fx = max(fits, key=lambda z: (float(z['curve'][n_fix - 1]) if np.isfinite(z['curve'][n_fix - 1]) else -np.inf,
+                                              z['decay'] if np.isfinite(z['decay']) else -1.0))
+                ftag = {**tag, 'hparams': f"{tag['hparams']}_t{n_fix}"}
+                preds[config_id(ftag)] = boosting.predict_boosting(fx['fitted'], ctx.X(fx['columns'], 'out'), n_fix)
+                fic = monthly_ic(ctx.m_fit, boosting.predict_boosting(fx['fitted'], ctx.X(fx['columns'], 'fit'), n_fix),
+                                 y_all[ctx.fit_rows])
+                selections.append({**ftag, 'valid_year': fold['valid_year'], 'inner_valid_year': fold['inner_valid_year'],
+                                   'inner_train_years': fold['inner_train_years'], 'min_years_exception': fold['min_years_exception'],
+                                   'h3_label': fx['h3_label'], 'h3_decay': fx['decay'],
+                                   'h3_span': float(2 / (1 - fx['decay']) - 1) if np.isfinite(fx['decay']) else np.nan,
+                                   'trees': n_fix, 'ties': np.nan, 'inner_ic': float(fx['curve'][n_fix - 1]),
+                                   'train_ic': mean_ic(fic), 'n_train': chosen['n_train'],
+                                   'delta': np.nan if fx['fitted']['delta'] is None else fx['fitted']['delta'],
+                                   'huber_sigma': fx['huber_sigma'], 'huber_sigma_converged': fx['huber_sigma_converged']})
             params.setdefault('|'.join(map(str, setting)), f['params'])
             seconds = time.perf_counter() - t0
             timings.append({'part': 'fold', 'fold': fold['fold'], 'model': setting[0], 'target': setting[1], 'loss': setting[2],
@@ -1092,13 +1136,13 @@ def run_boosting_stage1(prepared: dict, config, kind: str, *, settings=None, inn
 def run_boosting(prepared: dict, config, kind: str, *, phase: str, stage1: dict | None = None, settings=None,
                  sets: dict | None = None, folds: list[dict] | None = None, inner_scope: str = 'common', device: str | None = None,
                  n_threads: int | None = None, workers: int = 1, followup: bool = False,
-                 overrides: dict | None = None, log=print) -> dict:
+                 overrides: dict | None = None, fixed_trees=None, log=print) -> dict:
     """한 부스팅 종류·한 단계(전체 또는 일부 설정)를 실행한다. 반환 형식은 run_linear와 같고 curves·params가 더 있다.
 
     phase='individual': [Size, B/M, Mom, σ]. phase='index': [σ]·[H1 지수]·[H1 지수, σ], 같은 세션의 run_boosting_stage1 결과가
     필요하다(같은 설정의 지수). followup=True면 후속 튜닝 설정(boosting.FOLLOWUP_DEPTHS)이 기본 설정이 되고 폴더 끝에 _d4가 붙는다.
     settings·sets·overrides(라이브러리 설정 덮어쓰기)는 자유롭게 준다(검사 없음). workers>1이면 Fold를 프로세스로 나눈다
-    (n_threads를 함께 줄일 것). 난수 없음.
+    (n_threads를 함께 줄일 것). 난수 없음. fixed_trees=[500]이면 같은 학습에서 트리 500개 고정 예측도 함께 만든다(hparams 끝 _t500).
     """
     if inner_scope not in INNER_SCOPES:
         raise ValueError('inner_scope_unknown')
@@ -1129,7 +1173,7 @@ def run_boosting(prepared: dict, config, kind: str, *, phase: str, stage1: dict 
         timings = [t for t in stage1['timings'] if mine(t)]
     payload = {'data': data, 'labels': boosting_labels(prepared), 'decay_of': decay_of, 'settings': settings, 'sets': sets,
                'index_cols': index_cols, 'inner_scope': inner_scope, 'device': device, 'n_threads': n_threads,
-               'overrides': dict(overrides or {})}
+               'overrides': dict(overrides or {}), 'fixed_trees': list(fixed_trees or [])}
     done = execute_folds(_run_fold_boosting, payload, folds, workers=workers, log=log)
     out = assemble_folds(done, folds, val_keys, offsets, timings)
     out['curves'] = curves + out.get('curves', [])

@@ -9,7 +9,7 @@ import yaml
 from src.contracts import Config
 
 # observe는 ingest 표와 collect(as-of)를 읽는 가용성 점검 단계라 그 둘 뒤, features 앞에 둔다.
-STAGES = ("ingest", "collect", "observe", "features", "h1-test", "h1-pca-variance", "h1-pca-structure", "h1-pca-ic", "h1-constrained-pca", "h1-hypothesis", "h1-mean-tests", "h3-test", "h3-hypothesis", "h3-overlap", "validate", "final-test")
+STAGES = ("ingest", "collect", "observe", "features", "h1-test", "h1-pca-variance", "h1-pca-structure", "h1-pca-ic", "h1-constrained-pca", "h1-hypothesis", "h1-mean-tests", "h3-test", "h3-hypothesis", "h3-overlap", "base-features", "validate", "final-test")
 
 
 def load_config(config_path: Path) -> Config:
@@ -455,6 +455,22 @@ def plan_h3_overlap(config: Config, *, root: Path = Path("."), execute: bool = F
     return run_overlap(config, root=root, preconditions=pre)
 
 
+def plan_base_features(config: Config, *, root: Path = Path("."), execute: bool = False) -> dict:
+    """기본 피처 17개 계산 + 검사(가용률·학습 행·단독 Rank IC·상관·배당 방식 재현). src/evaluation/base_analysis.
+
+    execute 없으면 입력 파일만 확인한다(피처 계산은 marcap 일별 전체를 읽어 오래 걸림).
+    execute면 data/processed/base_features.parquet와 outputs/run_id/BASE_ANALYSIS/<시각>/의 report.md·run.json을 쓴다.
+    """
+    from src.evaluation.base_analysis import run
+    need = [config["PATHS"][k] for k in ("panel", "trading_days", "h1_components", "h3")]
+    missing = [n for n in need if not (root / n).is_file()]
+    if missing:
+        raise FileNotFoundError("required_data_missing:" + ",".join(missing))
+    if not execute:
+        return {"execute": False, "inputs_present": need}
+    return run(root, config, execute=True)
+
+
 def plan_validate(config: Config) -> None:
     """공통 표본과 연별 Fold로 세 모형의 후보를 비교하고 설정을 선택한다.
 
@@ -512,7 +528,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                "h1-pca-variance": plan_h1_pca_variance, "h1-pca-structure": plan_h1_pca_structure, "h1-pca-ic": plan_h1_pca_ic,
                "h1-constrained-pca": plan_h1_constrained_pca, "h1-hypothesis": plan_h1_hypothesis,
                "h1-mean-tests": plan_h1_mean_tests, "h3-test": plan_h3_test, "h3-hypothesis": plan_h3_hypothesis,
-               "h3-overlap": plan_h3_overlap}
+               "h3-overlap": plan_h3_overlap, "base-features": plan_base_features}
     if args.stage in runners:
         runner = runners[args.stage]
         result = runner(config, execute=args.execute)

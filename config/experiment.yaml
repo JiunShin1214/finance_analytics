@@ -33,7 +33,11 @@ PATHS:
   h2_debt_csv: data/raw/h2/h2_debt_lag_6m_fiscal_screened_2001_2021.csv   # 팀원(src/h2/) 산출 CSV를 원본으로 취급 [2026-11-15]
   h2_monthly_csv: data/raw/h2/monthly.csv                                  # 팀원 월별 정책 점수(final_rule_v2_sensitivity)
   h2_source_dir: data/raw/h2/source/                                       # 재현용 원천(한국은행 문서 정리본·부채비율.xlsx), 계산에 안 씀
-  h2: data/processed/h2.parquet                                            # src/features/h2.py 산출(debt·policy·policy_x_debt)
+  h2_hybrid_csv: data/raw/h2/h2_debt_hybrid_candidate_2001_2021.csv       # 팀원 hybrid 부채(DART 공시일 우선 + DataGuide 6개월 지연 보완) [2026-11-21 수령]
+  h2: data/processed/h2.parquet                                            # src/features/h2.py 산출(debt·policy·policy_x_debt). 2026-11-21 hybrid로 갱신(재계산 결과와 EXISTS_SAME 확인)
+  h4: data/processed/h4_epu_current.parquet                               # 팀원 H4 산출(mom, epu_raw, h4_interaction) [2026-11-21 수령]. 기준월 t에 EPU(t)
+  base_features: data/processed/base_features.parquet                      # src/features/base.py 산출(기본 피처, 종목×기준월) [2026-11-21]
+  base_analysis: outputs/run_id/BASE_ANALYSIS/                             # src/evaluation/base_analysis.py 실행 폴더(report.md + run.json)
   features: data/processed/features.parquet
   samples: data/processed/samples.parquet
   predictions: outputs/validation/predictions.csv
@@ -128,7 +132,7 @@ H2:
   # 2026-11-15 결정: H2 = 팀원 구현(src/h2/, 수정하지 않음) 그대로. 팀원 CSV(PATHS.h2_*)를 data/ 입력으로 쓰고 src/features/h2.py가
   # data/processed/h2.parquet를 만든다. 예전 설계(발표문 사전·시가총액 민감도)는 대체됨.
   definition:
-    debt: proxy_masked(DataGuide 연간 부채비율, 결산+6개월 공개 가정, 12월 결산만) → 기준월마다 적격 종목 안 1%/99% 윈저 → z(ddof=0)  # src/h2/features/transforms.monthly_standardize
+    debt: hybrid 부채비율(DART 공시일 우선 + DataGuide 6개월 지연 보완, 2026-11-21 팀원 갱신. 이전 lag_6m은 h2_debt_csv) → 기준월마다 적격 종목 안 1%/99% 윈저 → z(ddof=0)  # src/h2/features/transforms.monthly_standardize. 팀원 표기상 PIT 전부 검증된 자료는 아님
     policy: final_rule_v2_sensitivity   # 한국은행 통화정책방향 문장 규칙 점수(완화 +1 ~ 긴축 −1), 월 공통, 발표일 < 기준월 말일
     policy_x_debt: policy × debt
     standardize_rows: eligible_panel_rows_per_base_month   # 팀원 training_frame과 같은 집합(목표값 유무로 고르지 않음)
@@ -147,10 +151,91 @@ H2:
       comparison: [[size, bm, mom, sigma], [h1_index, sigma]]   # 같은 학습 행(H2까지 관측된 행)으로 함께 실행
 H4:
   enabled: false
+  # 2026-11-21: 팀원 산출 data/processed/h4_epu_current.parquet 사용. 기준월 t에 EPU(t)를 붙임(팀원 의도, main 코드·README의 t−1과 다름).
+  # 한계: EPU(t)는 t월 기사로 만들지만 지수 공표는 t월 이후일 수 있어 PIT 논란 가능 → 보고서에 명시, t−1 버전 강건성 점검은 선택.
+  definition: {epu: 'epu_raw (월 공통, 기준월 t에 EPU(t))', interaction: 'h4_interaction = mom × epu_raw'}
   search_spec: null
   uncertainty_lexicon: null
   matching_spec: null
   aggregation_spec: null
+# 기본(통제) 피처 [2026-11-19~21 사용자 결정, 노션 「12주차 실행」 2-2]. 설계 A-1: H 변수와 정의가 같은 것만 뺌.
+# 근거 표시: 확인 = 원문·요약 확인, 기억 = 원문 미확인, 관례 = 문헌 근거 없음, 우리 자료 = 자체 검증.
+BASE_FEATURES:
+  base_months: ['2000-01', '2021-11']   # 기준월 2021-12(목표월 2022-01)는 테스트 기간이라 만들지 않음(H2와 같음)
+  inputs:
+    marcap_dir: data/raw/marcap/                       # 일별, 2000~2021. 종목코드는 6자리로 맞춤(2000-01~05 파일은 앞 0 누락)
+    kospi_index_csv: data/raw/external_data/코스피_지수_20261008162112.csv   # 월말 지수 2000-02~2021-12
+    total_return_xlsx: [data/raw/external_data/1999_2010_코스피 수정수익률.xlsx, data/raw/external_data/2011_2021_코스피 수정수익률.xlsx]   # DataGuide S410007900 수정주가수익률(현금배당포함), 월간
+    flows_xlsx:   # DataGuide 연간 손익(분기 누적의 결산 행). (기준, 재무제표) → 파일, {항목 코드: 개념}
+      KGAAP_cons: {file: 1999_2010_연결_feature.xlsx, items: {'4000960002': ni_owner}}
+      KGAAP_sep: {file: 1999_2010_개별_feature.xlsx, items: {'1000960000': ni_owner}}   # 개별은 지배·비지배 구분 없음
+      KIFRS_cons: {file: 2009_2021_연결_feature.xlsx, items: {'6000908004': ni_owner}}
+      KIFRS_sep: {file: 2009_2021_개별_feature.xlsx, items: {'3000908004': ni_owner}}
+  common_rules:   # 재무 피처 공통 결정 ①~④
+    filing_time: h1_equity_rule        # ① DART 최초 접수일(equity_dating), P4 마지막 거래일 이후 접수는 다음 달, P3 기준일+18개월 그 달 말일 만료
+    income_period: annual              # ② 연간(결산) 값. 근거 RMW(Fama·French 2015)·GP/A(Novy-Marx 2013) 원 정의
+    statement: h1_equity_tier          # ③ 연결 우선(H1 자기자본 T1→T1D→T2→T3와 같은 재무제표). 한 비율 안 분자·분모는 같은 재무제표
+    gaap_ifrs_boundary: '2010-12'      # ④ 회계기간 2010-12까지 K-GAAP 우선, 이후 K-IFRS (dataguide_extract.LAST_GAAP_MONTH)
+  daily_rules:
+    trading_day: volume_positive       # 거래량 0(거래정지)인 날은 일별 통계에서 뺌
+    adjusted_price: cumulative_changes_ratio   # marcap 일수익률(분할 보정 확인, 2018-05-04 삼성전자)을 누적해 수정주가
+    ivol_min_days: 15                  # 관례값(근거 미확인): 그 달 거래일이 15일 미만이면 고유 변동성 미산출
+    market_return: kospi_value_weighted_previous_day_marcap   # B-3: marcap KOSPI 전 종목, 전일 시가총액 가중
+  features:   # 이름: [정의, 기대 부호(단독 IC 점검용), 근거]
+    str: ['r_t (교수님 수정수익률)', '-', 'Jegadeesh 1990 (확인)']
+    ltr: ['t-35~t-12 24개월 누적수익률, 하나라도 결측이면 미산출', '-', 'GHZ mom36m = GKX 피처 (기억)']
+    high52: ['t월 말 수정종가 / t-11~t 수정고가 최댓값, 12개월 모두 거래 필요', '+', 'George·Hwang 2004 (확인)']
+    turnover: ['t-2~t 평균(월 거래량 / 월말 상장주식수), 3개월 모두 필요', '-', 'Datar·Naik·Radcliffe 1998, GHZ turn (기억)']
+    ln_dvol: ['ln(t월 거래대금 합)', '-', 'Brennan·Chordia·Subrahmanyam 1998 (확인)']
+    illiq: ['t월 거래일 평균 |일수익률| / 거래대금', '+', 'Amihud 2002 (확인)']
+    ivol: ['t월 일별 CAPM 잔차 표준편차(ddof=2)', '-', 'Ang·Hodrick·Xing·Zhang 2006 (확인), 3요인 대신 CAPM은 자료 제약']
+    max_ret: ['t월 최대 일수익률', '-', 'Bali·Cakici·Whitelaw 2011 (확인), 한국 Nartea·Wu·Liu 2014 (확인)']
+    beta: ['지난 156주 주별 수익률 회귀 기울기, 최소 52주', '-', 'GHZ beta(Fama·MacBeth 1973) = GKX 피처 (기억)']
+    ln_price: ['ln(t월 말 종가)', '?', '관례']
+    roa: ['지배주주 순이익(연간) / 전년 말 총자산(같은 재무제표)', '+', 'GHZ roaq = GKX 피처 (기억), 원 정의는 분기']
+    ep: ['지배주주 순이익(연간) / t월 말 시가총액, 음수 그대로', '+', 'Basu 1977 (확인), GHZ ep (기억)']
+    dy: ['최근 12개월 (월 배당수익 × 전월 말 시가총액) 합 / t월 말 시가총액, 12개월 모두 필요', '+', 'Litzenberger·Ramaswamy 1979 (확인), 계산 방식은 우리 자료 검증(2026-11-21)']
+    mkt_ret: ['KOSPI t월 수익률(월 공통)', 'none', 'Welch·Goyal 2008 (확인)']
+    mkt_ret3: ['KOSPI t-2~t 누적수익률(월 공통)', 'none', 'Welch·Goyal 2008 (확인)']
+    mkt_vol12: ['KOSPI t-11~t 월수익률 표준편차 ddof=1(월 공통)', 'none', 'Welch·Goyal 2008 (확인)']
+    breadth: ['t월 적격 종목 중 r_t > 0 비율(월 공통)', 'none', '관례']
+  market_common: [mkt_ret, mkt_ret3, mkt_vol12, breadth]   # D-2: 순위 변환 예외(값 그대로), 부스팅에만 입력
+  overlap_rule: keep_all_model_handles   # 2026-11-21 사용자 A: 상관이 높아도 미리 빼지 않고 모두 넣음(GKX 2020: 94개 전부, 규제·차원축소·트리가 처리). 결과 보고 넣었다 빼지 않음
+  check_items: [ltr_sign, ln_price_basis, ln_dvol_illiq, ivol_max, illiq_size, roa_ep]   # BASE_ANALYSIS 20261121T023832에서 확인 필요로 나온 항목
+  pending:   # 이번 범위 밖
+    industry_required: [asset_growth, gpa, cfp, sp, pct_accruals, sales_growth]   # 금융업(KSIC K) 결측 → 업종 분류 자료 대기
+    teammate_answer: [rmw]
+  model_input:   # D-1·D-2 (모델 연결은 다음 범위)
+    missing: mean_fill_train_and_predict   # 2026-11-21 사용자: 이번 실행은 교수님 지침의 예외로 관측값 변환 뒤 빈 칸 0(그 달 평균), 학습에도 사용. 근거 Chen·McCoy 2024 JFE, GKX 2020. 교수님 확인 전
+    exclude_train_target_months: ['2001-01', '2001-02']   # 시장 변동성 12개월 창 미충족(월 공통이라 평균으로 못 채움) → 학습에서 뺌
+    linear_transform: retune_rank_z_winsor_z   # 확장 피처로 다시 비교 전 임시값 winsor_zscore
+    boosting_transform: rank
+    linear:   # 2026-11-21 사용자: 선형은 비선형과 비교할 기준선. ENet 추가 안 함
+      models: [ols, ridge]
+      targets: [winsor_1_99, monthly_zscore]   # 원값 제외(4개 입력 결과에서 항상 최저)
+      losses: [mse, huber_q999, huber_sigma135]
+      ridge_lambda: yearly_inner_validation   # MODEL_GRID.ridge_lambdas 6개 중 해마다 내부 검증으로 선택
+      h3_lambda: model_grid_10_candidates
+      transforms_compared: [rank, zscore, winsor_zscore]
+    lightgbm:   # 2026-11-21 사용자. 로컬 CPU
+      kinds: [regression, rank_regression]
+      depths: [3]                          # 이전 1등(두 종류 모두). 깊이 4는 나중에 검토
+      regression_targets: [winsor_1_99, monthly_zscore]   # 입력이 바뀌어 이전 순위가 유지된다는 보장이 없어 4개 조합 모두
+      regression_losses: [mse, huber_sigma135]
+      learning_rates: [0.01, 0.05]          # 교수님 피드백 2(학습률·트리 수)
+      tree_count: [yearly_inner_validation, fixed_500]   # 1000개까지 학습해 두 방식 모두 보고
+      h3_spans: model_grid_boosting_h3_spans   # 12·36·60
+      input_transform: rank
+    xgboost:   # 2026-11-21 사용자. Colab GPU
+      kinds: [regression, pairwise, rank_regression]
+      depths: [3]
+      regression_targets: [winsor_1_99, monthly_zscore]
+      regression_losses: [mse, huber_sigma135]
+      l2: {regression: [0], pairwise: [0, 5], rank_regression: [0, 5]}   # 보류였던 L2 0 vs 5 재시험(H4 편입 뒤)
+      learning_rates: [0.01, 0.05]
+      tree_count: [yearly_inner_validation, fixed_500]
+      h3_spans: model_grid_boosting_h3_spans
+      input_transform: rank
 PERIODS:
   warmup:
   - 2000
