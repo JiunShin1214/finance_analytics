@@ -115,6 +115,20 @@ class AccountingTests(unittest.TestCase):
         self.assertEqual(a.loc['2012-06'].statement_month, '2010-12')
         self.assertEqual(a.loc['2012-07'].acc_reason, 'expired_18m')      # 2010-12 + 18개월 = 2012-06 말 만료
 
+    def test_rmw_operating_income_over_bm_equity_nonpositive_missing(self):
+        st = pd.DataFrame({'code': 'A000001', 'stock_code': '000001', 'fy': ['2009'], 'month': ['2009-12'], 'std': ['KGAAP'],
+                           'tier': 'T3_separate_total', 'side': 'sep', 'available_month': ['2010-03'], 'rcept_dt': ['20100330'],
+                           'cons_assets': [np.nan], 'sep_assets': [100.0]})
+        fl = pd.DataFrame({'code': 'A000001', 'fy': ['2009'], 'ni_owner': [10.0], 'op_income': [8.0], 'std': 'KGAAP', 'side': 'sep'})
+        months = ['2010-03', '2010-04', '2010-05']
+        last = pd.Series(pd.to_datetime([pd.Period(m, 'M').to_timestamp(how='end') for m in months]), index=months)
+        acc = base.accounting_asof(st, fl, months, last).set_index(['stock_id', 'base_month'])
+        self.assertEqual(acc.op_income.tolist(), [8.0, 8.0, 8.0])
+        eq = pd.Series([40.0, 0.0, -5.0], index=acc.index)                  # B/M 자기자본: 양수, 0, 자본잠식
+        rmw = acc.op_income / eq.where(eq.gt(0))
+        self.assertAlmostEqual(rmw.iloc[0], 0.2)
+        self.assertTrue(rmw.iloc[1:].isna().all())
+
 
 if __name__ == '__main__':
     unittest.main()

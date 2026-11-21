@@ -168,10 +168,10 @@ BASE_FEATURES:
     kospi_index_csv: data/raw/external_data/코스피_지수_20261008162112.csv   # 월말 지수 2000-02~2021-12
     total_return_xlsx: [data/raw/external_data/1999_2010_코스피 수정수익률.xlsx, data/raw/external_data/2011_2021_코스피 수정수익률.xlsx]   # DataGuide S410007900 수정주가수익률(현금배당포함), 월간
     flows_xlsx:   # DataGuide 연간 손익(분기 누적의 결산 행). (기준, 재무제표) → 파일, {항목 코드: 개념}
-      KGAAP_cons: {file: 1999_2010_연결_feature.xlsx, items: {'4000960002': ni_owner}}
-      KGAAP_sep: {file: 1999_2010_개별_feature.xlsx, items: {'1000960000': ni_owner}}   # 개별은 지배·비지배 구분 없음
-      KIFRS_cons: {file: 2009_2021_연결_feature.xlsx, items: {'6000908004': ni_owner}}
-      KIFRS_sep: {file: 2009_2021_개별_feature.xlsx, items: {'3000908004': ni_owner}}
+      KGAAP_cons: {file: 1999_2010_연결_feature.xlsx, items: {'4000960002': ni_owner, '4000950000': op_income}}
+      KGAAP_sep: {file: 1999_2010_개별_feature.xlsx, items: {'1000960000': ni_owner, '1000950000': op_income}}   # 개별은 지배·비지배 구분 없음
+      KIFRS_cons: {file: 2009_2021_연결_feature.xlsx, items: {'6000908004': ni_owner, '6000906001': op_income}}
+      KIFRS_sep: {file: 2009_2021_개별_feature.xlsx, items: {'3000908004': ni_owner, '3000906001': op_income}}
   common_rules:   # 재무 피처 공통 결정 ①~④
     filing_time: h1_equity_rule        # ① DART 최초 접수일(equity_dating), P4 마지막 거래일 이후 접수는 다음 달, P3 기준일+18개월 그 달 말일 만료
     income_period: annual              # ② 연간(결산) 값. 근거 RMW(Fama·French 2015)·GP/A(Novy-Marx 2013) 원 정의
@@ -196,6 +196,7 @@ BASE_FEATURES:
     roa: ['지배주주 순이익(연간) / 전년 말 총자산(같은 재무제표)', '+', 'GHZ roaq = GKX 피처 (기억), 원 정의는 분기']
     ep: ['지배주주 순이익(연간) / t월 말 시가총액, 음수 그대로', '+', 'Basu 1977 (확인), GHZ ep (기억)']
     dy: ['최근 12개월 (월 배당수익 × 전월 말 시가총액) 합 / t월 말 시가총액, 12개월 모두 필요', '+', 'Litzenberger·Ramaswamy 1979 (확인), 계산 방식은 우리 자료 검증(2026-11-21)']
+    rmw: ['영업이익(연간, ROA·E/P와 같은 사업보고서) / B/M과 같은 자기자본(asof.parquet, t월). 자본 0 이하(자본잠식)는 결측. 금융업 포함', '+', 'Fama·French 2015 RMW(원 정의는 이자비용도 뺌, 1999~2010 이자비용 없어 영업이익으로 통일: 팀원 결정 2026-11-21). 자본 양수·금융업 포함은 Ken French 데이터 라이브러리 OP 포함 조건(확인)']
     mkt_ret: ['KOSPI t월 수익률(월 공통)', 'none', 'Welch·Goyal 2008 (확인)']
     mkt_ret3: ['KOSPI t-2~t 누적수익률(월 공통)', 'none', 'Welch·Goyal 2008 (확인)']
     mkt_vol12: ['KOSPI t-11~t 월수익률 표준편차 ddof=1(월 공통)', 'none', 'Welch·Goyal 2008 (확인)']
@@ -205,7 +206,7 @@ BASE_FEATURES:
   check_items: [ltr_sign, ln_price_basis, ln_dvol_illiq, ivol_max, illiq_size, roa_ep]   # BASE_ANALYSIS 20261121T023832에서 확인 필요로 나온 항목
   pending:   # 이번 범위 밖
     industry_required: [asset_growth, gpa, cfp, sp, pct_accruals, sales_growth]   # 금융업(KSIC K) 결측 → 업종 분류 자료 대기
-    teammate_answer: [rmw]
+    teammate_answer: []   # rmw 답변 받음(2026-11-21) → features.rmw
   model_input:   # D-1·D-2 (모델 연결은 다음 범위)
     missing: mean_fill_train_and_predict   # 2026-11-21 사용자: 이번 실행은 교수님 지침의 예외로 관측값 변환 뒤 빈 칸 0(그 달 평균), 학습에도 사용. 근거 Chen·McCoy 2024 JFE, GKX 2020. 교수님 확인 전
     exclude_train_target_months: ['2001-01', '2001-02']   # 시장 변동성 12개월 창 미충족(월 공통이라 평균으로 못 채움) → 학습에서 뺌

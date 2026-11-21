@@ -52,7 +52,7 @@ class InputSetTests(unittest.TestCase):
         for m in ('mkt_ret', 'mkt_ret3', 'mkt_vol12', 'breadth', 'policy', 'epu_raw'):
             self.assertFalse(any(m in c for c in lin.values()))
             self.assertIn(m, boo['base+h1+h3+h2+h4'])
-        self.assertEqual(len(lin['base+h1+h3+h2+h4']), 20)
+        self.assertEqual(len(lin['base+h1+h3+h2+h4']), 21)
 
 
 class UnitTests(unittest.TestCase):
