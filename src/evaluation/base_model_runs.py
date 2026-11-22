@@ -23,7 +23,8 @@ from src.evaluation import model_test as mt
 from src.features.base import MARKET_FEATURES, STOCK_FEATURES
 
 H1 = ['size', 'bm', 'mom']
-CODE_FILES = ['src/evaluation/model_test.py', 'src/evaluation/base_model_runs.py', 'src/models/linear.py', 'src/models/boosting.py']
+CODE_FILES = ['src/evaluation/model_test.py', 'src/evaluation/base_model_runs.py', 'src/models/linear.py', 'src/models/boosting.py',
+              'src/evaluation/shap_values.py']
 XGB_L2_KEY = 'lambda'
 
 
@@ -216,4 +217,90 @@ def finalize_boosting(root: Path, config, prepared: dict, results: dict, *, auth
         out.append(_once(parts, kind, lambda m=merged: mt.finalize_boosting(root, config, prepared, m(), started=started,
                                                                             out_root=out_root, log=log, author=author,
                                                                             experiment=run_name), log))
+    return out
+
+
+# ---------------------------------------------------------------- 본 실행(5단계, 2026-11-22)
+
+def main_run_spec(config) -> dict:
+    return config['BASE_FEATURES']['model_input']['main_run']
+
+
+def only_fixed(result: dict, n_trees: int) -> dict:
+    """트리 n개 고정 결과만 남긴다(같은 학습에서 나오는 해마다 선택 예측·선택 행은 버림). 곡선·내부 검증 표는 그대로."""
+    tail = f'_t{n_trees}'
+    out = dict(result)
+    out['predictions'] = {k: v for k, v in result['predictions'].items() if k.endswith(tail)}
+    out['selections'] = result['selections'][result['selections'].hparams.str.endswith(tail)].reset_index(drop=True)
+    if not out['predictions']:
+        raise ValueError('no_fixed_tree_predictions')
+    return out
+
+
+def main_units(prepared: dict, config, kinds, *, n_threads: int | None = None, workers: int = 1, log=print) -> list:
+    """단위 = 종류 × 세트(6개). 설정은 config main_run 하나(깊이·학습률·트리 고정·L2·pairwise 쌍). 모델을 결과에 담는다.
+    트리 상한(mt.boosting.MAX_TREES)을 고정 트리 수와 같게 맞춰 두어야 한다(같은 학습의 첫 n개 트리라 결과는 같고 시간만 준다)."""
+    run = main_run_spec(config)
+    n = int(run['trees'])
+    if mt.boosting.MAX_TREES != n:
+        raise ValueError(f'set_mt.boosting.MAX_TREES_to_{n}')
+    units = []
+    for kind in kinds:
+        target, loss = run['kinds'][kind]
+        ov = {}
+        if kind == 'xgb_pairwise':
+            ov.update(run['pairwise_pairs'])
+        if mt.boosting.KINDS[kind]['library'] == 'xgboost' and run['xgb_l2']:
+            ov[XGB_L2_KEY] = run['xgb_l2']
+        setting = [(kind, target, loss, int(run['depth']), float(run['learning_rate']))]
+        for set_name, cols in input_sets('boosting').items():
+            spec = {'set': set_name, 'cols': cols, 'kind': kind, 'settings': setting, 'overrides': ov or None, 'trees': n,
+                    'max_trees': mt.boosting.MAX_TREES, 'keep_models': bool(run['save_models'])}
+            fn = (lambda st=setting, ov=ov or None, sn=set_name, c=cols, kd=kind:
+                  only_fixed(mt.run_boosting(prepared, config, kd, phase='basefeat', settings=st, sets={sn: c}, overrides=ov,
+                                             fixed_trees=[n], keep_models=bool(run['save_models']), n_threads=n_threads,
+                                             workers=workers, log=log), n))
+            units.append((f'{kind}__{set_name}', spec, fn))
+    return units
+
+
+def shap_units(prepared: dict, config, results: dict, *, device: str = 'cpu', log=print) -> list:
+    """단위 = 종류 × SHAP 세트. results는 main_units 결과({단위 이름: 결과})."""
+    from src.evaluation import shap_values
+    sh = main_run_spec(config)['shap']
+    units = []
+    for name, r in results.items():
+        kind, set_name = name.split('__')
+        if set_name not in sh['sets']:
+            continue
+        spec = {'kind': kind, 'set': set_name, 'interactions': set_name in sh['interaction_sets'], 'source_unit': name}
+        fn = (lambda r=r, sn=set_name:
+              shap_values.compute(prepared, config, r, sets=[sn], interaction_sets=[s for s in sh['interaction_sets'] if s == sn],
+                                  device=device, log=log))
+        units.append((f'shap__{name}', spec, fn))
+    return units
+
+
+def finalize_main(root: Path, config, prepared: dict, results: dict, shap_results: dict, *, author: str, run_name: str,
+                  started: datetime, parts: Path, out_root: Path | None = None, log=print) -> list:
+    """종류마다 결과 폴더 하나(<시각>_<RUN_NAME>_<종류>_basefeat): 보고 표 + shap_importance·shap_interactions(공유),
+    models.pkl·shap_values.parquet(각자 PC, result.zip 제외)."""
+    import pandas as pd
+    out = []
+    for kind in sorted({n.split('__')[0] for n in results}):
+        def make(kind=kind):
+            merged = mt.merge_results([r for n, r in results.items() if n.startswith(kind + '__')])
+            sh = [r for n, r in shap_results.items() if n.startswith(f'shap__{kind}__')]
+            cat = lambda key: pd.concat([r[key] for r in sh if len(r[key])], ignore_index=True) if sh else pd.DataFrame()
+            extra = {'shap_importance': (cat('importance'), 'csv'), 'shap_interactions': (cat('interactions'), 'csv')}
+            done = mt.finalize_boosting(root, config, prepared, merged, started=started, out_root=out_root, log=log,
+                                        author=author, experiment=run_name, extra_tables=extra)
+            folder = Path(done['run_dir'])
+            with (folder / 'models.pkl').open('wb') as f:
+                pickle.dump(merged.get('models', []), f)
+            if sh:
+                cat('values').to_parquet(folder / 'shap_values.parquet', index=False)
+            log(f"{kind}: 모델 {len(merged.get('models', []))}개·SHAP 저장 → {folder}")
+            return done
+        out.append(_once(parts, f'main_{kind}', make, log))
     return out

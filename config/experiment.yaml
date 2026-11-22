@@ -238,6 +238,21 @@ BASE_FEATURES:
       tree_count: [yearly_inner_validation, fixed_500]
       h3_spans: model_grid_boosting_h3_spans
       input_transform: rank
+    main_run:   # 5 본 실행(2026-11-22 사용자). 근거는 우리 자료(16 Fold 바깥 검증, 0.002 미만이면 단순한 쪽)
+      kinds:   # 이름: [목표값, 손실]. 선형·일반 회귀 제외(basefeat_v2, 순위 목표가 lr 0.01에서 +0.005~0.010)
+        lgb_rankreg: [percentile, mse]       # 로컬 CPU
+        xgb_rankreg: [percentile, mse]       # Colab GPU
+        xgb_pairwise: [decile, pairwise]     # Colab GPU
+      depth: 3                 # tune_lgb_v1·tune_xgb_v1: 세 모델 모두 3 > 4(깊이 4는 학습−검증 차이만 커짐)
+      learning_rate: 0.01      # basefeat_v2: 0.01 > 0.05
+      trees: 500               # 고정. 해마다 선택은 어디서도 1등 아님, 500·1000·1500 차이 < 0.002(LGB 1000은 +0.00196)
+      xgb_l2: 0                # 0 vs 5 차이 0.0002·0.0004(코드 기본값 0). 입력이 늘면 다시 봄
+      pairwise_pairs: {lambdarank_pair_method: mean, lambdarank_num_pair_per_sample: 8, seed: 0}   # pairwise_check_v1: 전체 쌍 0.1156 vs 표본 8개 0.1173(시드 sd 0.0006), 33분→8분
+      save_models: true        # Fold마다 고른 모델(트리 500개) 저장 → SHAP
+      shap:
+        sets: [base, base+h1+h3+h2+h4]          # 기본 세트·주 세트
+        interaction_sets: [base+h1+h3+h2+h4]    # 상호작용은 주 세트만, 세 모델 모두(LGB는 shap 패키지)
+        rows: outer_validation                  # 각 Fold 모델로 그 Fold 바깥 검증 행(2006~2021 이어 붙임)
 PERIODS:
   warmup:
   - 2000

@@ -833,7 +833,7 @@ def execute_folds(fold_fn, payload: dict, folds: list[dict], *, workers: int = 1
 
 def assemble_folds(done: dict, folds: list[dict], val_keys: pd.DataFrame, offsets: np.ndarray, timings: list) -> dict:
     """Fold 결과를 Fold 순서로 합친다: 설정별 예측 배열, 선택 표, 내부 검증 표, 시간(부스팅은 곡선도)."""
-    preds, selections, inner, curves = {}, [], [], []
+    preds, selections, inner, curves, models = {}, [], [], [], []
     timings = list(timings)
     for k, f in enumerate(folds):
         r = done[f['fold']]
@@ -843,10 +843,13 @@ def assemble_folds(done: dict, folds: list[dict], val_keys: pd.DataFrame, offset
         inner += r['inner']
         timings += r['timings']
         curves += r.get('curves', [])
+        models += r.get('models', [])
     out = {'val_keys': val_keys, 'predictions': preds, 'selections': pd.DataFrame(selections),
            'inner_ic': pd.concat(inner, ignore_index=True), 'timings': pd.DataFrame(timings)}
     if curves:
         out['curves'] = curves
+    if models:
+        out['models'] = models
     return out
 
 
@@ -866,6 +869,8 @@ def merge_results(parts: list[dict]) -> dict:
         out['curves'] = [c for p in parts for c in p.get('curves', [])]
     if any('params' in p for p in parts):
         out['params'] = {k: v for p in parts for k, v in p.get('params', {}).items()}
+    if any('models' in p for p in parts):
+        out['models'] = [m for p in parts for m in p.get('models', [])]
     for key in ('kind', 'phase', 'device', 'followup'):
         if key in first:
             out[key] = first[key]
@@ -1030,7 +1035,7 @@ def _run_fold_boosting(fold: dict) -> dict:
     ctx = FoldContext(data, train & (year >= lo) & (year <= hi), scope & (year == fold['inner_valid_year']),
                       predict & (year == fold['valid_year']))
     y_all = data.y.to_numpy(float)
-    selections, inner, timings, preds, curves, params = [], [], [], {}, [], {}
+    selections, inner, timings, preds, curves, params, models = [], [], [], {}, [], {}, []
     n_jobs, i_job = len(p['sets']) * len(p['settings']), 0
     for set_name, cols in p['sets'].items():
         for setting in p['settings']:
@@ -1075,6 +1080,12 @@ def _run_fold_boosting(fold: dict) -> dict:
                                    'train_ic': mean_ic(fic), 'n_train': chosen['n_train'],
                                    'delta': np.nan if fx['fitted']['delta'] is None else fx['fitted']['delta'],
                                    'huber_sigma': fx['huber_sigma'], 'huber_sigma_converged': fx['huber_sigma_converged']})
+                if p.get('keep_models'):
+                    # 본 실행(2026-11-22): 예측에 쓴 모델(고른 λ, 첫 n_fix개 트리)을 저장해 SHAP에 쓴다
+                    models.append({'config_id': config_id(ftag), 'fold': fold['fold'], 'valid_year': fold['valid_year'],
+                                   'input_set': set_name, 'model': setting[0], 'library': fx['fitted']['library'],
+                                   'n_trees': n_fix, 'h3_label': fx['h3_label'], 'features': list(cols),
+                                   'columns': list(fx['columns']), 'raw': boosting.dump_model(fx['fitted'], n_fix)})
             params.setdefault('|'.join(map(str, setting)), f['params'])
             seconds = time.perf_counter() - t0
             timings.append({'part': 'fold', 'fold': fold['fold'], 'model': setting[0], 'target': setting[1], 'loss': setting[2],
@@ -1083,7 +1094,7 @@ def _run_fold_boosting(fold: dict) -> dict:
             _progress(f"  {prefix} 선택: {chosen['h3_label'] or '-'} 트리 {trees}, 내부 IC {chosen['inner_ic']:.4f}, "
                       f"학습 IC {mean_ic(train_ic):.4f}, {seconds:.0f}초 ({i_job}/{n_jobs}, 남은 예상 {elapsed / i_job * (n_jobs - i_job):.0f}초)")
     return {'fold': fold, 'selections': selections, 'inner': inner, 'timings': timings, 'preds': preds, 'curves': curves,
-            'params': params, 'seconds': time.perf_counter() - t_fold}
+            'params': params, 'models': models, 'seconds': time.perf_counter() - t_fold}
 
 
 def _kind_settings(kind: str, settings, followup: bool = False) -> list[tuple]:
@@ -1136,13 +1147,14 @@ def run_boosting_stage1(prepared: dict, config, kind: str, *, settings=None, inn
 def run_boosting(prepared: dict, config, kind: str, *, phase: str, stage1: dict | None = None, settings=None,
                  sets: dict | None = None, folds: list[dict] | None = None, inner_scope: str = 'common', device: str | None = None,
                  n_threads: int | None = None, workers: int = 1, followup: bool = False,
-                 overrides: dict | None = None, fixed_trees=None, log=print) -> dict:
+                 overrides: dict | None = None, fixed_trees=None, keep_models: bool = False, log=print) -> dict:
     """한 부스팅 종류·한 단계(전체 또는 일부 설정)를 실행한다. 반환 형식은 run_linear와 같고 curves·params가 더 있다.
 
     phase='individual': [Size, B/M, Mom, σ]. phase='index': [σ]·[H1 지수]·[H1 지수, σ], 같은 세션의 run_boosting_stage1 결과가
     필요하다(같은 설정의 지수). followup=True면 후속 튜닝 설정(boosting.FOLLOWUP_DEPTHS)이 기본 설정이 되고 폴더 끝에 _d4가 붙는다.
     settings·sets·overrides(라이브러리 설정 덮어쓰기)는 자유롭게 준다(검사 없음). workers>1이면 Fold를 프로세스로 나눈다
     (n_threads를 함께 줄일 것). 난수 없음. fixed_trees=[500]이면 같은 학습에서 트리 500개 고정 예측도 함께 만든다(hparams 끝 _t500).
+    keep_models=True면 고정 트리 예측에 쓴 모델을 결과 'models'(Fold × 세트 × 설정마다 dump_model 바이트)에 담는다.
     """
     if inner_scope not in INNER_SCOPES:
         raise ValueError('inner_scope_unknown')
@@ -1173,7 +1185,7 @@ def run_boosting(prepared: dict, config, kind: str, *, phase: str, stage1: dict 
         timings = [t for t in stage1['timings'] if mine(t)]
     payload = {'data': data, 'labels': boosting_labels(prepared), 'decay_of': decay_of, 'settings': settings, 'sets': sets,
                'index_cols': index_cols, 'inner_scope': inner_scope, 'device': device, 'n_threads': n_threads,
-               'overrides': dict(overrides or {}), 'fixed_trees': list(fixed_trees or [])}
+               'overrides': dict(overrides or {}), 'fixed_trees': list(fixed_trees or []), 'keep_models': bool(keep_models)}
     done = execute_folds(_run_fold_boosting, payload, folds, workers=workers, log=log)
     out = assemble_folds(done, folds, val_keys, offsets, timings)
     out['curves'] = curves + out.get('curves', [])
@@ -1208,11 +1220,12 @@ def boosting_part_summary(result: dict) -> pd.DataFrame:
 
 
 def finalize_boosting(root: Path, config, prepared: dict, result: dict, *, started: datetime, out_root: Path | None = None,
-                      log=print, author: str, experiment: str) -> dict:
-    """부스팅 한 종류·한 단계의 저장: 보고 표 + 곡선(parquet). 폴더 <시각>_<실험>_<종류>_<단계>(후속 튜닝은 끝에 _d4)."""
+                      log=print, author: str, experiment: str, extra_tables: dict | None = None) -> dict:
+    """부스팅 한 종류·한 단계의 저장: 보고 표 + 곡선(parquet) + extra_tables. 폴더 <시각>_<실험>_<종류>_<단계>(후속 튜닝은 끝에 _d4)."""
     suffix = f"{result['kind']}_{result['phase']}" + (_followup_suffix(result['kind']) if result.get('followup') else '')
     return save_run(root, config, prepared, result, folder_suffix=suffix, started=started, out_root=out_root, author=author,
-                    experiment=experiment, extra_tables={'curves': (curves_frame(result['curves']), 'parquet')}, log=log)
+                    experiment=experiment, extra_tables={'curves': (curves_frame(result['curves']), 'parquet'), **(extra_tables or {})},
+                    log=log)
 
 
 def measure_boosting_fit(prepared: dict, config, setting, *, fold_no: int = 16, input_set: str = 'ind:size+bm+mom+sigma',
@@ -1426,7 +1439,7 @@ def finalize_linear(root: Path, config, prepared: dict, result: dict, *, started
 
 
 RESULT_ZIP = 'result.zip'
-NOT_SHARED = {'validation_predictions.parquet', RESULT_ZIP}    # 예측값은 커서(선형 356MB) 각자 PC에만
+NOT_SHARED = {'validation_predictions.parquet', RESULT_ZIP, 'models.pkl', 'shap_values.parquet'}    # 예측값·모델·SHAP 원값은 커서 각자 PC에만
 
 
 def save_run(root: Path, config, prepared: dict, result: dict, *, folder_suffix: str, started: datetime, author: str,
