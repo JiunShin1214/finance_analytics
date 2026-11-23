@@ -16,6 +16,9 @@ scikit-learn==1.9.1
 xgboost==3.4.1
 lightgbm==4.7.0
 
+# 부스팅 SHAP(LightGBM 상호작용값, 2026-11-22 추가). XGBoost SHAP는 라이브러리 기능(pred_contribs) 사용
+shap==0.54.1
+
 # 공시 수집·HTML 파싱
 requests==2.34.2
 beautifulsoup4==4.15.0

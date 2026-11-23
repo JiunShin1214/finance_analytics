@@ -250,6 +250,28 @@ def predict_boosting(fitted: Mapping, X, n_trees: int | None = None) -> np.ndarr
     return fitted['booster'].predict(X, num_iteration=n)
 
 
+def dump_model(fitted: Mapping, n_trees: int) -> bytes:
+    """첫 n_trees개 트리만 남긴 모델을 바이트로(저장·SHAP용). XGBoost는 UBJSON, LightGBM은 모델 문자열."""
+    n = int(n_trees)
+    if not 1 <= n <= MAX_TREES:
+        raise ValueError('boosting_tree_count')
+    if fitted['library'] == 'xgboost':
+        return bytes(fitted['booster'][:n].save_raw('ubj'))
+    return fitted['booster'].model_to_string(num_iteration=n).encode('utf-8')
+
+
+def load_model(library: str, raw: bytes, *, device: str = 'cpu'):
+    """dump_model 바이트 → 라이브러리 booster(저장된 트리 전부를 쓴다)."""
+    if library == 'xgboost':
+        import xgboost as xgb
+        booster = xgb.Booster()
+        booster.load_model(bytearray(raw))
+        booster.set_param({'device': device})
+        return booster
+    import lightgbm as lgb
+    return lgb.Booster(model_str=raw.decode('utf-8'))
+
+
 def feature_gain(fitted: Mapping, n_features: int, n_trees: int | None = None) -> np.ndarray:
     """첫 n_trees개 트리의 특징별 총 이득(gain). 쓰이지 않은 특징은 0."""
     n = int(fitted['best_trees'] if n_trees is None else n_trees)

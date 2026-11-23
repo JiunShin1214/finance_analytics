@@ -1,0 +1,191 @@
+"""기본 피처(src/features/base.py) 규칙 검사: 작은 가짜 자료만 쓴다(실제 data/ 파일을 읽지 않음)."""
+import unittest
+
+import numpy as np
+import pandas as pd
+
+from src.features import base
+
+
+def _daily(dates, r, volume=None, stock='000001', close=None, high=None, amount=None):
+    n = len(dates)
+    close = close if close is not None else 100 * np.cumprod(1 + np.asarray(r))
+    return pd.DataFrame({'stock_id': stock, 'date': pd.to_datetime(dates), 'r': r,
+                         'Close': close, 'High': high if high is not None else close,
+                         'Volume': volume if volume is not None else [10] * n,
+                         'Amount': amount if amount is not None else [1000.0] * n}).assign(
+        month=lambda x: x.date.dt.strftime('%Y-%m'))
+
+
+class GuardTests(unittest.TestCase):
+    def test_test_period_paths_blocked(self):
+        for p in ('data/raw/external_data/test_sealed/x.xlsx', 'data/raw/test_2022_2025__adjusted_monthly_return.csv'):
+            with self.assertRaises(PermissionError):
+                base.guard_development(p)
+        base.guard_development('data/raw/external_data/2009_2021_연결_feature.xlsx')
+
+
+class WindowTests(unittest.TestCase):
+    def test_long_term_reversal_window_and_missing(self):
+        months = pd.period_range('2000-01', '2003-12', freq='M').astype(str)
+        r = pd.Series(0.01, index=pd.MultiIndex.from_product([['000001'], months], names=['stock_id', 'month']))
+        w = base._wide(r, months)
+        ltr = np.expm1(np.log1p(w).rolling(24, min_periods=24).sum().shift(12))
+        # t = 2002-12: t-35 = 2000-01 … t-12 = 2001-12, 24개월
+        self.assertAlmostEqual(ltr.loc['2002-12', '000001'], 1.01 ** 24 - 1)
+        self.assertTrue(np.isnan(ltr.loc['2002-11', '000001']))   # 창이 2000-01 이전으로 나감
+        w.loc['2000-02', '000001'] = np.nan
+        ltr2 = np.expm1(np.log1p(w).rolling(24, min_periods=24).sum().shift(12))
+        self.assertTrue(np.isnan(ltr2.loc['2002-12', '000001']))  # 창(2000-01~2001-12) 안 하나라도 결측이면 미산출
+        self.assertTrue(np.isnan(ltr2.loc['2003-01', '000001']))  # 창 2000-02~2002-01
+        self.assertFalse(np.isnan(ltr2.loc['2003-02', '000001']))  # 창 2000-03~2002-02: 2000-02를 벗어남
+
+    def test_wide_long_roundtrip(self):
+        idx = pd.MultiIndex.from_tuples([('a', '2000-01'), ('b', '2000-02')], names=['stock_id', 'month'])
+        s = pd.Series([1.0, 2.0], index=idx)
+        back = base._long(base._wide(s, ['2000-01', '2000-02']), 'x').dropna()
+        self.assertEqual(back.to_dict(), s.to_dict())
+
+
+class DailyTests(unittest.TestCase):
+    def test_market_return_uses_previous_day_cap(self):
+        k = pd.DataFrame({'stock_id': ['a', 'a', 'b', 'b'], 'date': pd.to_datetime(['2000-01-03', '2000-01-04'] * 2),
+                          'r': [0.0, 0.10, 0.0, -0.10], 'Marcap': [300.0, 330.0, 100.0, 90.0]})
+        m = base.market_daily_return(k)
+        self.assertAlmostEqual(m.loc['2000-01-04'], (300 * 0.10 + 100 * -0.10) / 400)
+        self.assertNotIn(pd.Timestamp('2000-01-03'), m.index)        # 전일 시가총액이 없는 첫날은 제외
+
+    def test_halt_day_excluded_and_ivol_min_days(self):
+        dates = pd.bdate_range('2000-01-03', periods=20)
+        r = np.linspace(-0.02, 0.03, 20)
+        vol = [10] * 20
+        vol[5] = 0                                                   # 거래정지일
+        r[5] = 0.5                                                   # 거래정지일 값은 MAX에 들어가면 안 됨
+        d = _daily(dates, r, volume=vol)
+        mkt = pd.Series(np.linspace(-0.01, 0.01, 20), index=dates)
+        out = base.daily_monthly(d, mkt, ivol_min_days=15).set_index('month')
+        row = out.loc['2000-01']
+        self.assertEqual(row.trade_days, 19)
+        self.assertAlmostEqual(row.max_ret, 0.03)
+        self.assertAlmostEqual(row.r_px, np.prod(1 + r) - 1)          # 주가수익률은 모든 날 누적
+        self.assertFalse(np.isnan(row.ivol))
+        out2 = base.daily_monthly(d, mkt, ivol_min_days=25).set_index('month')
+        self.assertTrue(np.isnan(out2.loc['2000-01'].ivol))          # 거래일 부족 → 미산출
+
+    def test_split_adjusted_high(self):
+        dates = pd.bdate_range('2000-01-03', periods=3)
+        # 분할: 종가 100 → 50인데 일수익률은 0(분할 보정) → 수정 고가는 분할 전과 같은 단위
+        d = _daily(dates, [0.0, 0.0, 0.0], close=[100.0, 50.0, 50.0], high=[100.0, 50.0, 50.0])
+        out = base.daily_monthly(d, pd.Series(0.0, index=dates), 15).set_index('month')
+        self.assertAlmostEqual(out.loc['2000-01'].hi_m / out.loc['2000-01'].last_idx, 1.0)
+
+
+class BetaTests(unittest.TestCase):
+    def test_beta_two_and_min_weeks(self):
+        dates = pd.bdate_range('2000-01-03', '2002-12-31')
+        rng = np.random.default_rng(0)
+        m = pd.Series(rng.normal(0, 0.01, len(dates)), index=dates)
+        # 주별 수익률이 시장의 정확히 2배가 되도록 주마다 하루만 움직임
+        week = dates.to_period('W-FRI')
+        first = ~pd.Series(week).duplicated().to_numpy()
+        m = m.where(first, 0.0)
+        d = _daily(dates, (2 * m).to_numpy())
+        months = ['2000-06', '2001-06', '2002-12']
+        b = base.weekly_beta(d, m, months).dropna()
+        self.assertNotIn(('000001', '2000-06'), b.index)             # 52주 미만
+        self.assertAlmostEqual(b.loc[('000001', '2002-12')], 2.0, places=6)
+
+
+class AccountingTests(unittest.TestCase):
+    def test_asof_availability_expiry_and_previous_assets(self):
+        st = pd.DataFrame({'code': 'A000001', 'stock_code': '000001', 'fy': ['2009', '2010'], 'month': ['2009-12', '2010-12'],
+                           'std': ['KGAAP', 'KGAAP'], 'tier': 'T3_separate_total', 'side': 'sep',
+                           'available_month': ['2010-03', '2011-04'], 'rcept_dt': ['20100330', '20110401'],
+                           'cons_assets': [np.nan, np.nan], 'sep_assets': [100.0, 200.0]})
+        fl = pd.DataFrame({'code': 'A000001', 'fy': ['2009', '2010'], 'ni_owner': [10.0, 30.0], 'std': 'KGAAP', 'side': 'sep'})
+        months = pd.period_range('2010-01', '2012-12', freq='M').astype(str).tolist()
+        last = pd.Series(pd.to_datetime([pd.Period(m, 'M').to_timestamp(how='end') for m in months]), index=months)
+        a = base.accounting_asof(st, fl, months, last).set_index('base_month')
+        self.assertNotIn('2010-02', a.index)                              # 공개 전
+        self.assertEqual(a.loc['2010-03'].ni_owner, 10.0)
+        self.assertTrue(np.isnan(a.loc['2010-03'].assets_prev))          # 2008년 말 자산 없음
+        self.assertEqual(a.loc['2011-03'].statement_month, '2009-12')     # 2010 사업보고서는 4월 공개
+        self.assertEqual(a.loc['2011-04'].ni_owner, 30.0)
+        self.assertEqual(a.loc['2011-04'].assets_prev, 100.0)            # 전년 말 총자산(같은 개별)
+        self.assertEqual(a.loc['2012-06'].statement_month, '2010-12')
+        self.assertEqual(a.loc['2012-07'].acc_reason, 'expired_18m')      # 2010-12 + 18개월 = 2012-06 말 만료
+
+    def test_rmw_operating_income_over_bm_equity_nonpositive_missing(self):
+        st = pd.DataFrame({'code': 'A000001', 'stock_code': '000001', 'fy': ['2009'], 'month': ['2009-12'], 'std': ['KGAAP'],
+                           'tier': 'T3_separate_total', 'side': 'sep', 'available_month': ['2010-03'], 'rcept_dt': ['20100330'],
+                           'cons_assets': [np.nan], 'sep_assets': [100.0]})
+        fl = pd.DataFrame({'code': 'A000001', 'fy': ['2009'], 'ni_owner': [10.0], 'op_income': [8.0], 'std': 'KGAAP', 'side': 'sep'})
+        months = ['2010-03', '2010-04', '2010-05']
+        last = pd.Series(pd.to_datetime([pd.Period(m, 'M').to_timestamp(how='end') for m in months]), index=months)
+        acc = base.accounting_asof(st, fl, months, last).set_index(['stock_id', 'base_month'])
+        self.assertEqual(acc.op_income.tolist(), [8.0, 8.0, 8.0])
+        eq = pd.Series([40.0, 0.0, -5.0], index=acc.index)                  # B/M 자기자본: 양수, 0, 자본잠식
+        rmw = acc.op_income / eq.where(eq.gt(0))
+        self.assertAlmostEqual(rmw.iloc[0], 0.2)
+        self.assertTrue(rmw.iloc[1:].isna().all())
+
+
+class IndustryTests(unittest.TestCase):
+    FIN = {'static_k': {'000001', '000002'},
+           'hist': {'000001': [('2017-12', False), ('2018-12', True), ('2020-12', True)]}}   # 2019-12 Hist. 빈칸
+
+    def test_financial_rule(self):
+        f = lambda s, m: base.is_financial(self.FIN, s, m)
+        self.assertFalse(f('000001', '2017-12'))          # K이지만 그 해 Hist. 비금융(지주 전환 전)
+        self.assertTrue(f('000001', '2018-12'))
+        self.assertTrue(f('000001', '2019-12'))           # Hist. 빈칸 → 이전 결산 값
+        self.assertTrue(f('000001', '2016-12'))           # 이전 값도 없음 → Static K
+        self.assertTrue(f('000002', '2010-12'))           # Hist. 전혀 없음 → Static K
+        self.assertFalse(f('000003', '2019-12'))          # K 아님(Hist.가 금융이어도 판정에 안 씀)
+        self.assertFalse(base.is_financial(None, '000001', '2019-12'))
+
+    def _acc(self):
+        st = pd.DataFrame({'code': 'A000001', 'stock_code': '000001', 'fy': ['2017', '2018'], 'month': ['2017-12', '2018-12'],
+                           'std': 'KIFRS', 'tier': 'T1_consolidated_owners', 'side': ['cons', 'cons'],
+                           'available_month': ['2018-03', '2019-03'], 'rcept_dt': ['20180330', '20190330'],
+                           'cons_assets': [100.0, 120.0], 'sep_assets': [50.0, 60.0]})
+        fl = pd.DataFrame({'code': 'A000001', 'fy': ['2017', '2017', '2018', '2018'], 'std': 'KIFRS',
+                           'side': ['cons', 'sep', 'cons', 'sep'], 'ni_owner': [10.0, 5.0, -4.0, 1.0],
+                           'op_income': 1.0, 'sales': [200.0, 80.0, 250.0, 90.0], 'cogs': [150.0, 60.0, 0.0, 70.0],
+                           'cfo': [6.0, 3.0, 2.0, 1.0]})
+        months = ['2018-03', '2019-03']
+        last = pd.Series(pd.to_datetime([pd.Period(m, 'M').to_timestamp(how='end') for m in months]), index=months)
+        return base.accounting_asof(st, fl, months, last, self.FIN).set_index(['stock_id', 'base_month'])
+
+    def test_asof_carries_current_assets_previous_sales_and_flag(self):
+        a = self._acc()
+        r17, r18 = a.loc[('000001', '2018-03')], a.loc[('000001', '2019-03')]
+        self.assertEqual((r17.sales, r17.cogs, r17.cfo, r17.assets_cur), (200.0, 150.0, 6.0, 100.0))
+        self.assertTrue(np.isnan(r17.sales_prev))
+        self.assertEqual((r18.assets_cur, r18.assets_prev, r18.sales_prev), (120.0, 100.0, 200.0))   # 같은 연결 쪽 전년 값
+        self.assertFalse(r17.financial)
+        self.assertTrue(r18.financial)
+
+    def test_industry_features_values_and_financial_missing(self):
+        a = self._acc()
+        f = base.industry_features(a, pd.Series([1000.0, 0.0]))
+        k17, k18 = ('000001', '2018-03'), ('000001', '2019-03')
+        self.assertAlmostEqual(f['gpa'][k17], 0.5)                  # (200-150)/100
+        self.assertAlmostEqual(f['cfp'][k17], 0.006)
+        self.assertAlmostEqual(f['sp'][k17], 0.2)
+        self.assertAlmostEqual(f['pct_accruals'][k17], 0.4)         # (10-6)/|10|
+        self.assertTrue(np.isnan(f['asset_growth'][k17]))            # 전년 자산 없음
+        self.assertTrue(np.isnan(f['sales_growth'][k17]))
+        for k in base.FINANCIAL_EXCLUDED:                            # 2018 결산은 금융 → 모두 결측
+            self.assertTrue(np.isnan(f[k][k18]), k)
+        a2 = a.assign(financial=False)
+        g = base.industry_features(a2, pd.Series([1000.0, 0.0]))
+        self.assertAlmostEqual(g['asset_growth'][k18], 0.2)
+        self.assertAlmostEqual(g['sales_growth'][k18], 0.25)
+        self.assertAlmostEqual(g['pct_accruals'][k18], -1.5)        # (-4-2)/|-4|
+        self.assertTrue(np.isnan(g['gpa'][k18]))                     # 매출원가 0 → 결측
+        self.assertTrue(np.isnan(g['cfp'][k18]))                     # 시가총액 0 → 결측
+
+
+if __name__ == '__main__':
+    unittest.main()
