@@ -130,5 +130,62 @@ class AccountingTests(unittest.TestCase):
         self.assertTrue(rmw.iloc[1:].isna().all())
 
 
+class IndustryTests(unittest.TestCase):
+    FIN = {'static_k': {'000001', '000002'},
+           'hist': {'000001': [('2017-12', False), ('2018-12', True), ('2020-12', True)]}}   # 2019-12 Hist. 빈칸
+
+    def test_financial_rule(self):
+        f = lambda s, m: base.is_financial(self.FIN, s, m)
+        self.assertFalse(f('000001', '2017-12'))          # K이지만 그 해 Hist. 비금융(지주 전환 전)
+        self.assertTrue(f('000001', '2018-12'))
+        self.assertTrue(f('000001', '2019-12'))           # Hist. 빈칸 → 이전 결산 값
+        self.assertTrue(f('000001', '2016-12'))           # 이전 값도 없음 → Static K
+        self.assertTrue(f('000002', '2010-12'))           # Hist. 전혀 없음 → Static K
+        self.assertFalse(f('000003', '2019-12'))          # K 아님(Hist.가 금융이어도 판정에 안 씀)
+        self.assertFalse(base.is_financial(None, '000001', '2019-12'))
+
+    def _acc(self):
+        st = pd.DataFrame({'code': 'A000001', 'stock_code': '000001', 'fy': ['2017', '2018'], 'month': ['2017-12', '2018-12'],
+                           'std': 'KIFRS', 'tier': 'T1_consolidated_owners', 'side': ['cons', 'cons'],
+                           'available_month': ['2018-03', '2019-03'], 'rcept_dt': ['20180330', '20190330'],
+                           'cons_assets': [100.0, 120.0], 'sep_assets': [50.0, 60.0]})
+        fl = pd.DataFrame({'code': 'A000001', 'fy': ['2017', '2017', '2018', '2018'], 'std': 'KIFRS',
+                           'side': ['cons', 'sep', 'cons', 'sep'], 'ni_owner': [10.0, 5.0, -4.0, 1.0],
+                           'op_income': 1.0, 'sales': [200.0, 80.0, 250.0, 90.0], 'cogs': [150.0, 60.0, 0.0, 70.0],
+                           'cfo': [6.0, 3.0, 2.0, 1.0]})
+        months = ['2018-03', '2019-03']
+        last = pd.Series(pd.to_datetime([pd.Period(m, 'M').to_timestamp(how='end') for m in months]), index=months)
+        return base.accounting_asof(st, fl, months, last, self.FIN).set_index(['stock_id', 'base_month'])
+
+    def test_asof_carries_current_assets_previous_sales_and_flag(self):
+        a = self._acc()
+        r17, r18 = a.loc[('000001', '2018-03')], a.loc[('000001', '2019-03')]
+        self.assertEqual((r17.sales, r17.cogs, r17.cfo, r17.assets_cur), (200.0, 150.0, 6.0, 100.0))
+        self.assertTrue(np.isnan(r17.sales_prev))
+        self.assertEqual((r18.assets_cur, r18.assets_prev, r18.sales_prev), (120.0, 100.0, 200.0))   # 같은 연결 쪽 전년 값
+        self.assertFalse(r17.financial)
+        self.assertTrue(r18.financial)
+
+    def test_industry_features_values_and_financial_missing(self):
+        a = self._acc()
+        f = base.industry_features(a, pd.Series([1000.0, 0.0]))
+        k17, k18 = ('000001', '2018-03'), ('000001', '2019-03')
+        self.assertAlmostEqual(f['gpa'][k17], 0.5)                  # (200-150)/100
+        self.assertAlmostEqual(f['cfp'][k17], 0.006)
+        self.assertAlmostEqual(f['sp'][k17], 0.2)
+        self.assertAlmostEqual(f['pct_accruals'][k17], 0.4)         # (10-6)/|10|
+        self.assertTrue(np.isnan(f['asset_growth'][k17]))            # 전년 자산 없음
+        self.assertTrue(np.isnan(f['sales_growth'][k17]))
+        for k in base.FINANCIAL_EXCLUDED:                            # 2018 결산은 금융 → 모두 결측
+            self.assertTrue(np.isnan(f[k][k18]), k)
+        a2 = a.assign(financial=False)
+        g = base.industry_features(a2, pd.Series([1000.0, 0.0]))
+        self.assertAlmostEqual(g['asset_growth'][k18], 0.2)
+        self.assertAlmostEqual(g['sales_growth'][k18], 0.25)
+        self.assertAlmostEqual(g['pct_accruals'][k18], -1.5)        # (-4-2)/|-4|
+        self.assertTrue(np.isnan(g['gpa'][k18]))                     # 매출원가 0 → 결측
+        self.assertTrue(np.isnan(g['cfp'][k18]))                     # 시가총액 0 → 결측
+
+
 if __name__ == '__main__':
     unittest.main()

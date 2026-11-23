@@ -84,7 +84,7 @@ def iter_rows(path: Path, sheet: str | None = None):
                 el.clear()
 
 
-def read_sheet(path: Path, items: dict[str, str]) -> tuple[pd.DataFrame, dict]:
+def read_sheet(path: Path, items: dict[str, str], text: tuple[str, ...] = ("fm",)) -> tuple[pd.DataFrame, dict]:
     """회계기준 output -> code/name/fy/quarter + one column per wanted item.
 
     The header row holds '코드' and '분기'; item codes sit two rows above it. An item listed once per period
@@ -121,7 +121,7 @@ def read_sheet(path: Path, items: dict[str, str]) -> tuple[pd.DataFrame, dict]:
         raise ValueError(f"dataguide_repeated_columns_disagree:{path.name}:{differ}")
     frame = pd.DataFrame(rows)
     for concept in cols:
-        if concept != "fm":
+        if concept not in text:   # text: concepts kept as strings (fiscal month, industry names)
             frame[concept] = pd.to_numeric(frame[concept], errors="coerce")
     return frame, {"rows": len(frame), "columns_per_item": {k: len(v) for k, v in cols.items()}}
 

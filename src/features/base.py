@@ -4,7 +4,7 @@
 중간 집계(marcap 월 집계, 시장 일수익률, 연간 재무)는 파일로 남기지 않고 메모리에서 계산한다.
 입력은 data/ 파일과 config뿐이며 이전 실행 기록을 읽지 않는다. 테스트 기간(2022~) 파일은 열지 않는다.
 
-열: stock_id, base_month, eligible, 피처 18개(종목 14 + 시장 공통 4), 피처별 <이름>_reason(값이 없을 때 이유).
+열: stock_id, base_month, eligible, financial(금융업 판정), 피처 24개(종목 20 + 시장 공통 4), 피처별 <이름>_reason(값이 없을 때 이유).
 시장 공통 4개(mkt_ret, mkt_ret3, mkt_vol12, breadth)는 같은 달 모든 종목이 같은 값이다.
 
 실행: python -m src.features.base             (계산·검사만, 쓰지 않음)
@@ -23,12 +23,17 @@ import yaml
 
 from src.preprocessing.dataguide_extract import iter_rows, read_sheet, sha256
 
-STOCK_FEATURES = ('str', 'ltr', 'high52', 'turnover', 'ln_dvol', 'illiq', 'ivol', 'max_ret', 'beta', 'ln_price', 'roa', 'ep', 'dy', 'rmw')
+STOCK_FEATURES = ('str', 'ltr', 'high52', 'turnover', 'ln_dvol', 'illiq', 'ivol', 'max_ret', 'beta', 'ln_price', 'roa', 'ep', 'dy', 'rmw',
+                  'asset_growth', 'gpa', 'cfp', 'sp', 'pct_accruals', 'sales_growth')
 MARKET_FEATURES = ('mkt_ret', 'mkt_ret3', 'mkt_vol12', 'breadth')
 FEATURES = STOCK_FEATURES + MARKET_FEATURES
 DAILY_FEATURES = ('ln_dvol', 'illiq', 'ivol', 'max_ret')
-ACCOUNTING_FEATURES = ('roa', 'ep', 'rmw')
-FLOW_ITEMS = ('ni_owner', 'op_income')
+ACCOUNTING_FEATURES = ('roa', 'ep', 'rmw', 'asset_growth', 'gpa', 'cfp', 'sp', 'pct_accruals', 'sales_growth')
+FINANCIAL_EXCLUDED = ('asset_growth', 'gpa', 'cfp', 'sp', 'pct_accruals', 'sales_growth')   # 금융업 결측(2026-11-20~21 결정)
+NUMERATOR = {'roa': 'ni_owner', 'ep': 'ni_owner', 'rmw': 'op_income', 'asset_growth': 'assets_cur', 'gpa': 'sales', 'cfp': 'cfo',
+             'sp': 'sales', 'pct_accruals': 'ni_owner', 'sales_growth': 'sales'}   # 값이 없을 때 이유 분류용 대표 입력
+FLOW_ITEMS = ('ni_owner', 'op_income', 'sales', 'cogs', 'cfo')
+ACC_VALUES = ('ni_owner', 'op_income', 'sales', 'cogs', 'cfo', 'assets_cur', 'assets_prev', 'sales_prev')
 MARCAP_COLUMNS = ['Code', 'Date', 'Close', 'ChangesRatio', 'Volume', 'Amount', 'High', 'Marcap', 'Market']
 CONSOLIDATED_TIERS = ('T1_consolidated_owners', 'T1D_consolidated_total_less_nci', 'T2_consolidated_total')
 EXCEL_EPOCH = pd.Timestamp('1899-12-30')
@@ -207,19 +212,92 @@ def annual_flows(root: Path, cfg: dict) -> pd.DataFrame:
         guard_development(path)
         f, _ = read_sheet(path, {str(k): v for k, v in spec['items'].items()})
         f = f[f.quarter.eq('결산')]
+        f = f.assign(**{i: np.nan for i in FLOW_ITEMS if i not in f})
         parts.append(f[['code', 'fy', *FLOW_ITEMS]].assign(std=std, side=side))
     return pd.concat(parts, ignore_index=True).drop_duplicates(['code', 'fy', 'std', 'side'])
 
 
-def accounting_asof(stmts: pd.DataFrame, flows: pd.DataFrame, months: list[str], last_days: pd.Series) -> pd.DataFrame:
-    """종목×기준월: 기준월까지 공개된 가장 최근 사업보고서의 지배순이익·영업이익, 같은 재무제표(연결/개별)의 전년 말 총자산."""
-    if 'op_income' not in flows:
-        flows = flows.assign(op_income=np.nan)
+# ---------------------------------------------------------------- 금융업 판정
+
+def read_hist_industry(path: Path, item: str) -> pd.DataFrame:
+    """시장 대표 업종(Hist.): 연도마다 같은 아이템 열이 반복되고, 한 행(회사×결산)에는 그 연도 칸에만 값이 있다."""
+    rows, base, cols, codes, prev = [], None, [], {}, {}
+    for _, c in iter_rows(path):
+        if base is None:
+            if {'코드', '분기'} <= set(c.values()):
+                base = next(i for i, v in c.items() if v == '코드')
+                cols = [i for i, v in codes.items() if i >= base + 5 and v == item]
+                if not cols:
+                    raise ValueError('dataguide_items_missing:' + path.name)
+            else:
+                codes, prev = prev, c
+            continue
+        code = str(c.get(base, ''))
+        if not code.startswith('A'):
+            continue
+        vals = {c[i] for i in cols if c.get(i) not in (None, '')}
+        if len(vals) > 1:
+            raise ValueError('hist_values_disagree:' + code)
+        rows.append({'code': code, 'fm': c.get(base + 2), 'fy': c.get(base + 3), 'industry': next(iter(vals)) if vals else None})
+    return pd.DataFrame(rows)
+
+
+def financial_flags(root: Path, cfg: dict) -> tuple[dict, dict]:
+    """금융업 판정(2026-11-23 사용자 B): KSIC 11차 대분류 K(Static, 현재 분류)이고 그 사업보고서 결산월의 시장 대표 업종(Hist.)도
+    금융일 때만 금융. 시점은 재무 피처와 같은 사업보고서 공시월(결정 A). Hist. 값이 없는 결산월은 그 회사의 가장 가까운
+    이전 결산월 값을 이어 쓰고, 이전 값도 없으면 Static K를 따른다."""
+    from src.preprocessing.dataguide_extract import statement_month
+    ind = cfg['inputs']['industry']
+    sp, hp = root / EXTERNAL / ind['static_file'], root / EXTERNAL / ind['hist_file']
+    guard_development(sp)
+    guard_development(hp)
+    s, _ = read_sheet(sp, {ind['ksic_section_item']: 'ksic'}, text=('ksic',))
+    static_k = {c[1:] for c in s.code[s.ksic.eq('K')]}
+    h = read_hist_industry(hp, ind['hist_item'])
+    h = h[h.industry.notna()]
+    no_fm = int(h.fm.isna().sum())   # 결산월 빈칸(2026-11-23 확인: 9행, 일반서비스 2개사)은 결산월을 정할 수 없어 뺀다
+    h = h[h.fm.notna()]
+    h = h.assign(month=[statement_month(y, m, '결산') for y, m in zip(h.fy, h.fm)], fin=h.industry.str.contains('금융'),
+                 stock_id=h.code.str[1:])
+    h = h.groupby(['stock_id', 'month']).fin.any().reset_index()
+    hist = {k: sorted(zip(g.month, g.fin)) for k, g in h[h.stock_id.isin(static_k)].groupby('stock_id')}
+    return {'static_k': static_k, 'hist': hist}, {'static_k_companies': len(static_k), 'hist_company_statements': int(len(h)),
+                                                 'hist_rows_without_fiscal_month': no_fm}
+
+
+def is_financial(fin: dict | None, stock_id: str, statement_month: str) -> bool:
+    """financial_flags 규칙으로 한 종목·사업보고서(결산월)의 금융 여부."""
+    if fin is None or stock_id not in fin['static_k']:
+        return False
+    best = None
+    for m, f in fin['hist'].get(stock_id, []):   # 결산월 오름차순
+        if m > statement_month:
+            break
+        best = f
+    return True if best is None else bool(best)
+
+
+# ---------------------------------------------------------------- 연간 재무 as-of
+
+def accounting_asof(stmts: pd.DataFrame, flows: pd.DataFrame, months: list[str], last_days: pd.Series,
+                    fin: dict | None = None) -> pd.DataFrame:
+    """종목×기준월: 기준월까지 공개된 가장 최근 사업보고서의 연간 값(지배순이익, 영업이익, 매출, 매출원가, 영업현금흐름),
+    같은 재무제표(연결/개별)의 당해·전년 말 총자산과 전년 매출, 그 보고서 결산월 기준 금융업 여부."""
+    flows = flows.assign(**{i: np.nan for i in FLOW_ITEMS if i not in flows})
     s = stmts.merge(flows, on=['code', 'fy', 'std', 'side'], how='left')
-    prev = s[['stock_code', 'month', 'cons_assets', 'sep_assets']].drop_duplicates(['stock_code', 'month'])
-    prev = prev.assign(month=(pd.PeriodIndex(prev.month, freq='M') + 12).astype(str))
-    s = s.merge(prev.rename(columns={'cons_assets': 'cons_prev', 'sep_assets': 'sep_prev'}), on=['stock_code', 'month'], how='left')
-    s['assets_prev'] = np.where(s.side.eq('cons'), s.cons_prev, s.sep_prev)
+    # 전년 값은 전년 사업보고서 행에서 올해와 같은 재무제표(연결/개별) 쪽을 쓴다: 두 쪽 매출을 모두 붙여 둔다
+    for side in ('cons', 'sep'):
+        f = flows[flows.side.eq(side)][['code', 'fy', 'std', 'sales']].rename(columns={'sales': side + '_sales'})
+        s = s.merge(f.drop_duplicates(['code', 'fy', 'std']), on=['code', 'fy', 'std'], how='left')
+    cols = {'cons_assets': 'cons_aprev', 'sep_assets': 'sep_aprev', 'cons_sales': 'cons_sprev', 'sep_sales': 'sep_sprev'}
+    prev = s[['stock_code', 'month', *cols]].drop_duplicates(['stock_code', 'month'])
+    prev = prev.assign(month=(pd.PeriodIndex(prev.month, freq='M') + 12).astype(str)).rename(columns=cols)
+    s = s.merge(prev, on=['stock_code', 'month'], how='left')
+    cons = s.side.eq('cons')
+    s['assets_cur'] = np.where(cons, s.cons_assets, s.sep_assets)
+    s['assets_prev'] = np.where(cons, s.cons_aprev, s.sep_aprev)
+    s['sales_prev'] = np.where(cons, s.cons_sprev, s.sep_sprev)
+    s['financial'] = [is_financial(fin, c, m) for c, m in zip(s.stock_code, s.month)]
     last = {str(k): v for k, v in last_days.items()}
     rows = []
     for code, g in s.groupby('stock_code'):
@@ -234,11 +312,26 @@ def accounting_asof(stmts: pd.DataFrame, flows: pd.DataFrame, months: list[str],
                 continue
             expiry = (pd.Period(best['month'], 'M') + 18).to_timestamp(how='end').normalize()   # P3
             if last.get(t, pd.Period(t, 'M').to_timestamp(how='end')) > expiry:
-                rows.append((code, t, np.nan, np.nan, np.nan, best['month'], best['side'], 'expired_18m'))
+                rows.append((code, t, *[np.nan] * len(ACC_VALUES), best['month'], best['side'], best['financial'], 'expired_18m'))
             else:
-                rows.append((code, t, best['ni_owner'], best['op_income'], best['assets_prev'], best['month'], best['side'], None))
-    return pd.DataFrame(rows, columns=['stock_id', 'base_month', 'ni_owner', 'op_income', 'assets_prev', 'statement_month', 'side',
-                                       'acc_reason'])
+                rows.append((code, t, *[best[v] for v in ACC_VALUES], best['month'], best['side'], best['financial'], None))
+    return pd.DataFrame(rows, columns=['stock_id', 'base_month', *ACC_VALUES, 'statement_month', 'side', 'financial', 'acc_reason'])
+
+
+def industry_features(acc: pd.DataFrame, cap: pd.Series) -> dict:
+    """금융업 결측 피처 6개(2026-11-20~21 결정 B-5, C-1~C-3, GP/A). cap은 acc 색인 순서의 기준월 t 말 시가총액."""
+    pos = lambda x: x.where(x.gt(0))
+    capv = pos(pd.Series(np.asarray(cap, dtype=float), index=acc.index))
+    f = {
+        'asset_growth': acc.assets_cur / pos(acc.assets_prev) - 1,                     # Cooper·Gulen·Schill 2008
+        'gpa': (acc.sales - pos(acc.cogs)) / pos(acc.assets_cur),                      # Novy-Marx 2013, 매출원가 0·빈칸 결측
+        'cfp': acc.cfo / capv,                                                          # Desai 등 2004 CFO/P, 음수 그대로
+        'sp': acc.sales / capv,                                                         # Barbee 등 1996
+        'pct_accruals': (acc.ni_owner - acc.cfo) / acc.ni_owner.abs().where(acc.ni_owner.ne(0)),   # Hafzalla 등 2011
+        'sales_growth': acc.sales / pos(acc.sales_prev) - 1,                            # Lakonishok 등 1994, GHZ sgr
+    }
+    nonfin = ~acc.financial.fillna(False).astype(bool)
+    return {k: v.where(nonfin) for k, v in f.items()}
 
 
 def equity_asof(root: Path, config: dict) -> pd.Series:
@@ -299,7 +392,8 @@ def build_base(root: Path, config: dict, *, statements: pd.DataFrame | None = No
 
     # 재무(ROA, E/P)
     stmts = statements if statements is not None else annual_statements(root)
-    acc = accounting_asof(stmts, annual_flows(root, cfg), months, last_days).set_index(['stock_id', 'base_month'])
+    fin, fin_record = financial_flags(root, cfg)
+    acc = accounting_asof(stmts, annual_flows(root, cfg), months, last_days, fin).set_index(['stock_id', 'base_month'])
     feats['roa'] = acc.ni_owner / acc.assets_prev.where(acc.assets_prev.gt(0))
     cap_at = p.market_cap.where(p.market_cap.gt(0)).reindex(pd.MultiIndex.from_tuples(acc.index, names=['stock_id', 'month']))
     feats['ep'] = pd.Series(acc.ni_owner.to_numpy() / cap_at.to_numpy(), index=acc.index)
@@ -307,9 +401,11 @@ def build_base(root: Path, config: dict, *, statements: pd.DataFrame | None = No
     equity = equity_asof(root, config)
     eq = equity.reindex(acc.index)
     feats['rmw'] = acc.op_income / eq.where(eq.gt(0))
+    feats.update(industry_features(acc, cap_at))
 
     out = panel[panel.month.between(first, last)][['stock_id', 'month', 'eligible']].rename(columns={'month': 'base_month'})
     keys = pd.MultiIndex.from_frame(out[['stock_id', 'base_month']])
+    out['financial'] = acc.financial.astype('boolean').reindex(keys).to_numpy()   # 공개된 사업보고서가 없는 행은 결측
     for name in STOCK_FEATURES:
         s = feats[name]
         s.index = s.index.set_names(['stock_id', 'base_month'])
@@ -325,7 +421,8 @@ def build_base(root: Path, config: dict, *, statements: pd.DataFrame | None = No
 
     out = add_reasons(out, dm, acc, equity)
     record = {'rows': int(len(out)), 'base_months': [first, last], 'stocks': int(out.stock_id.nunique()),
-              'checks': checks(out, dm, mkt, lvl, ret, acc, stmts), 'inputs_sha256': input_hashes(root, config)}
+              'checks': checks(out, dm, mkt, lvl, ret, acc, stmts), 'industry': fin_record,
+              'inputs_sha256': input_hashes(root, config)}
     return out.sort_values(['stock_id', 'base_month']).reset_index(drop=True), record
 
 
@@ -337,8 +434,8 @@ def add_reasons(out: pd.DataFrame, dm: pd.DataFrame, acc: pd.DataFrame, equity: 
     td.index = td.index.set_names(['stock_id', 'base_month'])
     td = td.reindex(keys).to_numpy()
     accr = acc.acc_reason.reindex(keys).to_numpy()
-    has = {'ni_owner': acc.ni_owner.reindex(keys).notna().to_numpy(),
-           'op_income': acc.op_income.reindex(keys).notna().to_numpy()}
+    has = {c: acc[c].reindex(keys).notna().to_numpy() for c in set(NUMERATOR.values())}
+    finv = acc.financial.astype('boolean').reindex(keys).fillna(False).to_numpy(dtype=bool)
     seen = keys.isin(acc.index)
     for name in FEATURES:
         r = np.full(len(out), None, dtype=object)
@@ -349,8 +446,10 @@ def add_reasons(out: pd.DataFrame, dm: pd.DataFrame, acc: pd.DataFrame, equity: 
         elif name in ACCOUNTING_FEATURES:
             r[miss & (accr == 'expired_18m')] = 'expired_18m'
             r[miss & ~seen] = 'no_public_annual_statement'
-            value = has['op_income' if name == 'rmw' else 'ni_owner']
-            r[miss & seen & ~value & (accr != 'expired_18m')] = 'value_missing'
+            if name in FINANCIAL_EXCLUDED:
+                r[miss & seen & finv & (accr != 'expired_18m')] = 'financial_industry'
+            value = has[NUMERATOR[name]]
+            r[miss & seen & pd.isna(r) & ~value & (accr != 'expired_18m')] = 'value_missing'
             if name == 'rmw':   # 분자가 있는데 빠졌으면 분모(B/M 자기자본) 이유
                 r[miss & pd.isna(r) & np.isnan(eq)] = 'no_equity_asof'
                 r[miss & pd.isna(r) & (eq <= 0)] = 'nonpositive_equity'
@@ -388,6 +487,7 @@ def input_hashes(root: Path, config: dict) -> dict:
     cfg = config['BASE_FEATURES']['inputs']
     files = [config['PATHS']['panel'], config['PATHS']['trading_days'], config['PATHS']['asof'], cfg['kospi_index_csv'],
              *cfg['total_return_xlsx'],
+             *[(EXTERNAL / cfg['industry'][k]).as_posix() for k in ('static_file', 'hist_file')],
              *[(EXTERNAL / v['file']).as_posix() for v in cfg['flows_xlsx'].values()]]
     return {f: sha256(root / f) for f in files}
 
