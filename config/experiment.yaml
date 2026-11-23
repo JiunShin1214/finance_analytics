@@ -34,7 +34,7 @@ PATHS:
   h2_monthly_csv: data/raw/h2/monthly.csv                                  # 팀원 월별 정책 점수(final_rule_v2_sensitivity)
   h2_source_dir: data/raw/h2/source/                                       # 재현용 원천(한국은행 문서 정리본·부채비율.xlsx), 계산에 안 씀
   h2_hybrid_csv: data/raw/h2/h2_debt_hybrid_candidate_2001_2021.csv       # 팀원 hybrid 부채(DART 공시일 우선 + DataGuide 6개월 지연 보완) [2026-11-21 수령]
-  h2: data/processed/h2.parquet                                            # src/features/h2.py 산출(debt·policy·policy_x_debt). 2026-11-21 hybrid로 갱신(재계산 결과와 EXISTS_SAME 확인)
+  h2: data/processed/h2.parquet                                            # src/features/h2.py 산출(debt·policy·policy_x_debt + 2026-11-23 팀원 확장 5개). 2026-11-23 갱신, 기존 열 동일 확인
   h4: data/processed/h4_epu_current.parquet                               # 팀원 H4 산출(mom, epu_raw, h4_interaction) [2026-11-21 수령]. 기준월 t에 EPU(t)
   base_features: data/processed/base_features.parquet                      # src/features/base.py 산출(기본 피처, 종목×기준월) [2026-11-21]
   base_analysis: outputs/run_id/BASE_ANALYSIS/                             # src/evaluation/base_analysis.py 실행 폴더(report.md + run.json)
@@ -135,6 +135,11 @@ H2:
     debt: hybrid 부채비율(DART 공시일 우선 + DataGuide 6개월 지연 보완, 2026-11-21 팀원 갱신. 이전 lag_6m은 h2_debt_csv) → 기준월마다 적격 종목 안 1%/99% 윈저 → z(ddof=0)  # src/h2/features/transforms.monthly_standardize. 팀원 표기상 PIT 전부 검증된 자료는 아님
     policy: final_rule_v2_sensitivity   # 한국은행 통화정책방향 문장 규칙 점수(완화 +1 ~ 긴축 −1), 월 공통, 발표일 < 기준월 말일
     policy_x_debt: policy × debt
+    debt_change: 지금 쓸 수 있는 보고서 부채비율 − 직전의 다른 결산기 보고서 부채비율(%p 원값), 다음 보고서까지 유지   # 2026-11-23 팀원 확장(README_H2 변수 8개), build_h2_debt_change.compute_debt_change
+    policy_change: policy(t) − policy(t−1), 바로 전 달력월, 월 공통
+    rate_change: 한국은행 기준금리(2008-02까지 콜금리 목표) 월말(t) − 월말(t−1) %p, 월 공통, 첫 달 2001-01 결측(팀원 규칙)   # build_bok_rate_history.make
+    policy_change_x_debt: policy_change × debt
+    rate_change_x_debt: rate_change × debt
     standardize_rows: eligible_panel_rows_per_base_month   # 팀원 training_frame과 같은 집합(목표값 유무로 고르지 않음)
     base_months: ['2001-01', '2021-11']                    # 기준월 2021-12(목표월 2022-01)는 테스트 기간이라 버림
   model_test:

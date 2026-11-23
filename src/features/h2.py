@@ -5,6 +5,13 @@
                   기준월마다 적격 종목 안에서 1%/99% 윈저 → z(ddof=0). src/h2/features/transforms.monthly_standardize.
 - policy        = monthly.csv final_rule_v2_sensitivity(한국은행 통화정책방향 문장 규칙 점수, 월 공통, −1~1).
 - policy_x_debt = policy × debt.
+2026-11-23 팀원 H2 확장(main PR #7·#8, README_H2 "변수 8개")의 추가 5개도 팀원 함수 그대로 계산한다.
+- debt_change   = 지금 쓸 수 있는 보고서 부채비율 − 직전의 다른 결산기 보고서 부채비율(%p, 원값), 다음 보고서까지 유지.
+                  src/h2/experiments/build_h2_debt_change.read_hybrid·compute_debt_change(Hybrid 전용, lag_6m이면 결측).
+- policy_change = policy(t) − policy(t−1), 바로 전 달력월(팀원 add_policy_change).
+- rate_change   = 한국은행 기준금리(2008-02까지 콜금리 목표) 월말(t) − 월말(t−1), %p.
+                  src/h2/preprocessing/build_bok_rate_history.make. 첫 달(2001-01)은 팀원 add_rate_change처럼 결측.
+- policy_change_x_debt = policy_change × debt, rate_change_x_debt = rate_change × debt.
 표준화 집합 = 우리 패널의 적격 행(기준월 2001-01~2021-11). 팀원 training_frame과 같은 집합이다(적격 행 전체에서
 표준화한 뒤 목표값 유무로 행을 고름). 목표값은 이 표에 없다.
 
@@ -34,13 +41,17 @@ import numpy as np
 import pandas as pd
 
 from src.h2.features.transforms import monthly_standardize   # 팀원 정의 원문(수정하지 않음)
+from src.h2.experiments.build_h2_debt_change import compute_debt_change, read_hybrid   # 팀원 DebtChange(수정하지 않음)
+from src.h2.preprocessing.build_bok_rate_history import make as bok_rate_table        # 팀원 금리 표(수정하지 않음)
 
 CODE_ROOT = Path(__file__).resolve().parents[2]
 BASE_FIRST, BASE_LAST = '2001-01', '2021-11'     # 정책 점수 2001-01 시작, 목표월 2021-12까지
 DEBT_COLUMNS = ['stock_id', 'feature_month', 'target_month', 'proxy_masked', 'fiscal_date', 'proxy_available_date',
                 'fiscal_end_leak', 'proxy_date_leak', 'lag_months']
 POLICY_COLUMNS = ['month', 'final_rule_v2_sensitivity', 'sensitivity_source_document_id', 'sensitivity_source_release_date']
-OUTPUT_COLUMNS = ['stock_id', 'base_month', 'eligible', 'debt_raw', 'debt', 'policy', 'policy_x_debt']
+OUTPUT_COLUMNS = ['stock_id', 'base_month', 'eligible', 'debt_raw', 'debt', 'policy', 'policy_x_debt',
+                  'debt_change', 'policy_change', 'rate_change', 'policy_change_x_debt', 'rate_change_x_debt']
+TEAM_CODE = ('src/h2/experiments/build_h2_debt_change.py', 'src/h2/preprocessing/build_bok_rate_history.py')
 DEFAULT_HYBRID_CSV = Path('data/processed/final/debt_hybrid/h2_debt_hybrid_candidate_2001_2021.csv')
 HYBRID_COLUMNS = ('stock_id', 'feature_month', 'debt_final_raw', 'source_type',
                   'source_available_date', 'source_fiscal_date')
@@ -193,6 +204,18 @@ def read_policy(path) -> pd.DataFrame:
     return m
 
 
+def monthly_changes(policy: pd.DataFrame) -> pd.DataFrame:
+    """월 공통 변화 2개: policy_change(팀원 add_policy_change), rate_change(팀원 금리 표, 첫 달 결측)."""
+    months = pd.PeriodIndex(policy.month, freq='M')
+    full = pd.period_range(months.min(), months.max(), freq='M')
+    score = pd.Series(policy.final_rule_v2_sensitivity.to_numpy(float), index=months).reindex(full)
+    _, rate = bok_rate_table()
+    rate = rate.set_index('feature_month').rate_change_pp.astype(float)
+    rate.iloc[0] = np.nan                    # 팀원 add_rate_change: 파일 첫 달은 직전 달이 없다고 보고 결측
+    return pd.DataFrame({'base_month': full.astype(str), 'policy_change': (score - score.shift(1)).to_numpy(),
+                         'rate_change': rate.reindex(full.astype(str)).to_numpy()})
+
+
 def build_h2(root: Path, config, *, debt_source: str = 'hybrid',
              hybrid_csv: Path | str | None = None) -> tuple[pd.DataFrame, dict]:
     """공통 패널 적격 표본에서 H2 특징표를 계산한다. Hybrid가 기본값."""
@@ -230,6 +253,21 @@ def build_h2(root: Path, config, *, debt_source: str = 'hybrid',
                 on='base_month', how='left', validate='many_to_one')
     f['policy'] = f.final_rule_v2_sensitivity
     f['policy_x_debt'] = f.policy * f.debt
+    # 2026-11-23 팀원 확장 5개
+    if debt_source == 'hybrid':
+        dc = compute_debt_change(read_hybrid(debt_path))
+        dc = dc.rename(columns={'feature_month': 'base_month', 'debt_change_raw': 'debt_change'})
+        f = f.merge(dc[['stock_id', 'base_month', 'debt_change', 'debt_final_raw']], on=['stock_id', 'base_month'],
+                    how='left', validate='one_to_one')
+        both = f.proxy_masked.notna() & f.debt_final_raw.notna()
+        if f.proxy_masked.notna().ne(f.debt_final_raw.notna()).any() or not np.allclose(f.proxy_masked[both], f.debt_final_raw[both]):
+            raise ValueError('h2_debt_change_source_mismatch')   # 팀원 add_debt_change와 같은 원천 일치 검사
+        f = f.drop(columns='debt_final_raw')
+    else:
+        f['debt_change'] = np.nan
+    f = f.merge(monthly_changes(policy), on='base_month', how='left', validate='many_to_one')
+    f['policy_change_x_debt'] = f.policy_change * f.debt
+    f['rate_change_x_debt'] = f.rate_change * f.debt
     out = (f.rename(columns={'proxy_masked': 'debt_raw'})[OUTPUT_COLUMNS]
            .sort_values(['stock_id', 'base_month']).reset_index(drop=True))
     if out.policy.isna().any():
@@ -253,6 +291,10 @@ def build_h2(root: Path, config, *, debt_source: str = 'hybrid',
         'policy_value_counts': {str(k): int(v) for k, v in policy.final_rule_v2_sensitivity.value_counts().sort_index().items()},
         'debt_monthly_mean_abs_max': float(out.groupby('base_month').debt.mean().abs().max()),
         'debt_monthly_std_ddof0_range': [float(x) for x in out.groupby('base_month').debt.std(ddof=0).agg(['min', 'max'])],
+        'debt_change_share': float(out.debt_change.notna().mean()),
+        'policy_change_nonzero_months': int(out.groupby('base_month').policy_change.first().fillna(0).ne(0).sum()),
+        'rate_change_nonzero_months': int(out.groupby('base_month').rate_change.first().fillna(0).ne(0).sum()),
+        'first_month_change_missing': out.base_month.min(),
     }
     if debt_source == 'lag_6m':
         # 기존 기록 형식도 유지하여 과거 6개월 지연 실험과 비교 가능하게 한다.
@@ -272,8 +314,10 @@ def build_h2(root: Path, config, *, debt_source: str = 'hybrid',
                   'debt_source': 'hybrid',
                   'full_historical_pit_verified': False,
                   'definition': 'debt=monthly_standardize(debt_final_raw) (1/99 winsor, z ddof=0, eligible rows), '
-                                'policy=final_rule_v2_sensitivity, policy_x_debt=policy*debt',
-                  'code_sha256': {p: sha256(CODE_ROOT / p) for p in ('src/features/h2.py', 'src/h2/features/transforms.py')},
+                                'policy=final_rule_v2_sensitivity, policy_x_debt=policy*debt; '
+                                'teammate 2026-11-23: debt_change=compute_debt_change(%p), policy_change=policy(t)-policy(t-1), '
+                                'rate_change=BOK month-end rate diff (first month NaN), *_x_debt = change*debt',
+                  'code_sha256': {p: sha256(CODE_ROOT / p) for p in ('src/features/h2.py', 'src/h2/features/transforms.py', *TEAM_CODE)},
                   'checks': checks}
     return out, record
 

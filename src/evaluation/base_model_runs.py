@@ -34,12 +34,15 @@ def feature_specs(config, family: str) -> dict:
     base = paths['base_features']
     specs = {n: {'path': base, 'transform': 'input'} for n in STOCK_FEATURES}
     specs.update({n: {'path': paths['h2'], 'transform': 'none'} for n in ('debt', 'policy_x_debt')})   # 팀원 z 그대로(H2 규칙)
+    # 2026-11-23 팀원 H2 확장: debt_change는 종목별 원값(%p)이라 다른 기본 피처처럼 변환, 상호작용은 policy_x_debt처럼 값 그대로
+    specs['debt_change'] = {'path': paths['h2'], 'transform': 'input'}
+    specs.update({n: {'path': paths['h2'], 'transform': 'none'} for n in ('policy_change_x_debt', 'rate_change_x_debt')})
     # Mom × EPU는 값 그대로(팀원 H4 규칙). EPU가 그 달 모든 종목에 같아서 매달 순위·z로 바꾸면 Mom의 순위·z와 똑같아져
     # 상호작용 정보가 사라지고 mom과 완전히 같은 열이 된다(2026-11-21 첫 실행에서 Huber 행렬 특이로 발견).
     specs['h4_interaction'] = {'path': paths['h4'], 'transform': 'none'}
     if family == 'boosting':
         specs.update({n: {'path': base, 'transform': 'none'} for n in MARKET_FEATURES})   # 월 공통: 값 그대로
-        specs['policy'] = {'path': paths['h2'], 'transform': 'none'}
+        specs.update({n: {'path': paths['h2'], 'transform': 'none'} for n in ('policy', 'policy_change', 'rate_change')})   # 월 공통
         specs['epu_raw'] = {'path': paths['h4'], 'transform': 'none'}
     return specs
 
@@ -47,7 +50,8 @@ def feature_specs(config, family: str) -> dict:
 def input_sets(family: str) -> dict:
     """입력 세트 6개(사용자 확인 2026-11-21): 기본 / +H1 / +H3 / +H1+H3 / +H2 / +H2+H4. 부스팅만 월 공통 변수를 넣는다."""
     base = list(STOCK_FEATURES) + (list(MARKET_FEATURES) if family == 'boosting' else [])
-    h2 = ['debt', 'policy_x_debt'] + (['policy'] if family == 'boosting' else [])
+    h2 = (['debt', 'policy_x_debt', 'debt_change', 'policy_change_x_debt', 'rate_change_x_debt']
+          + (['policy', 'policy_change', 'rate_change'] if family == 'boosting' else []))   # 팀원 H2 변수 8개(2026-11-23)
     h4 = ['h4_interaction'] + (['epu_raw'] if family == 'boosting' else [])
     return {'base': base, 'base+h1': base + H1, 'base+h3': base + ['sigma'], 'base+h1+h3': base + H1 + ['sigma'],
             'base+h1+h3+h2': base + H1 + ['sigma'] + h2, 'base+h1+h3+h2+h4': base + H1 + ['sigma'] + h2 + h4}
