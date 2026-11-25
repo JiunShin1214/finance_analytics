@@ -5,13 +5,8 @@
                   기준월마다 적격 종목 안에서 1%/99% 윈저 → z(ddof=0). src/h2/features/transforms.monthly_standardize.
 - policy        = monthly.csv final_rule_v2_sensitivity(한국은행 통화정책방향 문장 규칙 점수, 월 공통, −1~1).
 - policy_x_debt = policy × debt.
-2026-11-23 팀원 H2 확장(main PR #7·#8, README_H2 "변수 8개")의 추가 5개도 팀원 함수 그대로 계산한다.
-- debt_change   = 지금 쓸 수 있는 보고서 부채비율 − 직전의 다른 결산기 보고서 부채비율(%p, 원값), 다음 보고서까지 유지.
-                  src/h2/experiments/build_h2_debt_change.read_hybrid·compute_debt_change(Hybrid 전용, lag_6m이면 결측).
-- policy_change = policy(t) − policy(t−1), 바로 전 달력월(팀원 add_policy_change).
-- rate_change   = 한국은행 기준금리(2008-02까지 콜금리 목표) 월말(t) − 월말(t−1), %p.
-                  src/h2/preprocessing/build_bok_rate_history.make. 첫 달(2001-01)은 팀원 add_rate_change처럼 결측.
-- policy_change_x_debt = policy_change × debt, rate_change_x_debt = rate_change × debt.
+- policy_change = policy(t) − policy(t−1), 직전 달력월 기준(첫 달 결측).
+2026-11-24 통합 실험에 따라 모델 입력 후보를 위 4개로 축소한다. 기존 8개 피처 버전은 별도 보존한다.
 표준화 집합 = 우리 패널의 적격 행(기준월 2001-01~2021-11). 팀원 training_frame과 같은 집합이다(적격 행 전체에서
 표준화한 뒤 목표값 유무로 행을 고름). 목표값은 이 표에 없다.
 
@@ -24,7 +19,8 @@ model_test에서 debt·policy_x_debt는 우리 월별 순위 변환의 예외다
       python -m src.features.h2 --debt-source lag_6m  (이전 6개월 지연 방식 검사)
 
 주의: Hybrid는 완전히 검증된 historical PIT 자료가 아닌 후보 데이터다.
-출력 파일 이름과 열은 동일하나 원천이 다르면 값이 달라질 수 있다.
+출력은 관리용 4개 열과 모델 피처 4개 열이다. 원천이 다르면 값이 달라질 수 있다.
+기존 8피처 파일에서 전환할 때 유지 열의 값과 결측 위치가 다르면 교체하지 않는다.
 """
 from __future__ import annotations
 
@@ -41,17 +37,17 @@ import numpy as np
 import pandas as pd
 
 from src.h2.features.transforms import monthly_standardize   # 팀원 정의 원문(수정하지 않음)
-from src.h2.experiments.build_h2_debt_change import compute_debt_change, read_hybrid   # 팀원 DebtChange(수정하지 않음)
-from src.h2.preprocessing.build_bok_rate_history import make as bok_rate_table        # 팀원 금리 표(수정하지 않음)
 
 CODE_ROOT = Path(__file__).resolve().parents[2]
 BASE_FIRST, BASE_LAST = '2001-01', '2021-11'     # 정책 점수 2001-01 시작, 목표월 2021-12까지
 DEBT_COLUMNS = ['stock_id', 'feature_month', 'target_month', 'proxy_masked', 'fiscal_date', 'proxy_available_date',
                 'fiscal_end_leak', 'proxy_date_leak', 'lag_months']
 POLICY_COLUMNS = ['month', 'final_rule_v2_sensitivity', 'sensitivity_source_document_id', 'sensitivity_source_release_date']
-OUTPUT_COLUMNS = ['stock_id', 'base_month', 'eligible', 'debt_raw', 'debt', 'policy', 'policy_x_debt',
-                  'debt_change', 'policy_change', 'rate_change', 'policy_change_x_debt', 'rate_change_x_debt']
-TEAM_CODE = ('src/h2/experiments/build_h2_debt_change.py', 'src/h2/preprocessing/build_bok_rate_history.py')
+MODEL_FEATURES = ['debt', 'policy', 'policy_x_debt', 'policy_change']
+OUTPUT_COLUMNS = ['stock_id', 'base_month', 'eligible', 'debt_raw', *MODEL_FEATURES]
+LEGACY_OUTPUT_COLUMNS = set(OUTPUT_COLUMNS) | {
+    'debt_change', 'rate_change', 'policy_change_x_debt', 'rate_change_x_debt',
+}
 DEFAULT_HYBRID_CSV = Path('data/processed/final/debt_hybrid/h2_debt_hybrid_candidate_2001_2021.csv')
 HYBRID_COLUMNS = ('stock_id', 'feature_month', 'debt_final_raw', 'source_type',
                   'source_available_date', 'source_fiscal_date')
@@ -205,15 +201,12 @@ def read_policy(path) -> pd.DataFrame:
 
 
 def monthly_changes(policy: pd.DataFrame) -> pd.DataFrame:
-    """월 공통 변화 2개: policy_change(팀원 add_policy_change), rate_change(팀원 금리 표, 첫 달 결측)."""
+    """월별 정책 점수 변화량: 직전 달력월과 비교하며 첫 달은 결측으로 유지."""
     months = pd.PeriodIndex(policy.month, freq='M')
     full = pd.period_range(months.min(), months.max(), freq='M')
     score = pd.Series(policy.final_rule_v2_sensitivity.to_numpy(float), index=months).reindex(full)
-    _, rate = bok_rate_table()
-    rate = rate.set_index('feature_month').rate_change_pp.astype(float)
-    rate.iloc[0] = np.nan                    # 팀원 add_rate_change: 파일 첫 달은 직전 달이 없다고 보고 결측
-    return pd.DataFrame({'base_month': full.astype(str), 'policy_change': (score - score.shift(1)).to_numpy(),
-                         'rate_change': rate.reindex(full.astype(str)).to_numpy()})
+    return pd.DataFrame({'base_month': full.astype(str),
+                         'policy_change': (score - score.shift(1)).to_numpy()})
 
 
 def build_h2(root: Path, config, *, debt_source: str = 'hybrid',
@@ -253,23 +246,11 @@ def build_h2(root: Path, config, *, debt_source: str = 'hybrid',
                 on='base_month', how='left', validate='many_to_one')
     f['policy'] = f.final_rule_v2_sensitivity
     f['policy_x_debt'] = f.policy * f.debt
-    # 2026-11-23 팀원 확장 5개
-    if debt_source == 'hybrid':
-        dc = compute_debt_change(read_hybrid(debt_path))
-        dc = dc.rename(columns={'feature_month': 'base_month', 'debt_change_raw': 'debt_change'})
-        f = f.merge(dc[['stock_id', 'base_month', 'debt_change', 'debt_final_raw']], on=['stock_id', 'base_month'],
-                    how='left', validate='one_to_one')
-        both = f.proxy_masked.notna() & f.debt_final_raw.notna()
-        if f.proxy_masked.notna().ne(f.debt_final_raw.notna()).any() or not np.allclose(f.proxy_masked[both], f.debt_final_raw[both]):
-            raise ValueError('h2_debt_change_source_mismatch')   # 팀원 add_debt_change와 같은 원천 일치 검사
-        f = f.drop(columns='debt_final_raw')
-    else:
-        f['debt_change'] = np.nan
     f = f.merge(monthly_changes(policy), on='base_month', how='left', validate='many_to_one')
-    f['policy_change_x_debt'] = f.policy_change * f.debt
-    f['rate_change_x_debt'] = f.rate_change * f.debt
     out = (f.rename(columns={'proxy_masked': 'debt_raw'})[OUTPUT_COLUMNS]
            .sort_values(['stock_id', 'base_month']).reset_index(drop=True))
+    if out.duplicated(['stock_id', 'base_month']).any():
+        raise ValueError('h2_output_duplicate_keys')
     if out.policy.isna().any():
         raise ValueError('h2_policy_missing_for_base_month')
     if out.debt_raw.notna().ne(out.debt.notna()).any():
@@ -291,16 +272,19 @@ def build_h2(root: Path, config, *, debt_source: str = 'hybrid',
         'policy_value_counts': {str(k): int(v) for k, v in policy.final_rule_v2_sensitivity.value_counts().sort_index().items()},
         'debt_monthly_mean_abs_max': float(out.groupby('base_month').debt.mean().abs().max()),
         'debt_monthly_std_ddof0_range': [float(x) for x in out.groupby('base_month').debt.std(ddof=0).agg(['min', 'max'])],
-        'debt_change_share': float(out.debt_change.notna().mean()),
         'policy_change_nonzero_months': int(out.groupby('base_month').policy_change.first().fillna(0).ne(0).sum()),
-        'rate_change_nonzero_months': int(out.groupby('base_month').rate_change.first().fillna(0).ne(0).sum()),
         'first_month_change_missing': out.base_month.min(),
+        'output_columns': list(OUTPUT_COLUMNS),
+        'model_features': list(MODEL_FEATURES),
+        'missing_counts': {c: int(n) for c, n in out.isna().sum().items()},
+        'duplicate_keys': int(out.duplicated(['stock_id', 'base_month']).sum()),
     }
     if debt_source == 'lag_6m':
         # 기존 기록 형식도 유지하여 과거 6개월 지연 실험과 비교 가능하게 한다.
         record = {'inputs_sha256': {paths[k]: sha256(root / paths[k]) for k in ('h2_debt_csv', 'h2_monthly_csv', 'panel')},
                   'definition': 'teammate src/h2: debt=monthly_standardize(proxy_masked) (1/99 winsor, z ddof=0, eligible rows), '
-                                'policy=final_rule_v2_sensitivity, policy_x_debt=policy*debt',
+                                'policy=final_rule_v2_sensitivity, policy_x_debt=policy*debt, '
+                                'policy_change=policy(t)-policy(t-1)',
                   'code_sha256': {p: sha256(CODE_ROOT / p) for p in ('src/features/h2.py', 'src/h2/features/transforms.py')},
                   'checks': checks}
     else:
@@ -314,10 +298,9 @@ def build_h2(root: Path, config, *, debt_source: str = 'hybrid',
                   'debt_source': 'hybrid',
                   'full_historical_pit_verified': False,
                   'definition': 'debt=monthly_standardize(debt_final_raw) (1/99 winsor, z ddof=0, eligible rows), '
-                                'policy=final_rule_v2_sensitivity, policy_x_debt=policy*debt; '
-                                'teammate 2026-11-23: debt_change=compute_debt_change(%p), policy_change=policy(t)-policy(t-1), '
-                                'rate_change=BOK month-end rate diff (first month NaN), *_x_debt = change*debt',
-                  'code_sha256': {p: sha256(CODE_ROOT / p) for p in ('src/features/h2.py', 'src/h2/features/transforms.py', *TEAM_CODE)},
+                                'policy=final_rule_v2_sensitivity, policy_x_debt=policy*debt, '
+                                'policy_change=policy(t)-policy(t-1)',
+                  'code_sha256': {p: sha256(CODE_ROOT / p) for p in ('src/features/h2.py', 'src/h2/features/transforms.py')},
                   'checks': checks}
     return out, record
 
@@ -352,7 +335,20 @@ def ensure_h2(root: Path, config, *, execute: bool = False, log=print,
     out, record = build_h2(root, config, debt_source=debt_source, hybrid_csv=hybrid_csv)
     target = root / config['PATHS']['h2']
     if target.exists():
-        match = same_table(pd.read_parquet(target), out)
+        existing = pd.read_parquet(target)
+        if set(existing.columns) == LEGACY_OUTPUT_COLUMNS:
+            retained_match = same_table(existing[OUTPUT_COLUMNS], out)
+            record['legacy_8feature_migration'] = {
+                'retained_columns_identical': retained_match,
+                'old_rows': int(len(existing)),
+                'new_rows': int(len(out)),
+                'old_columns': list(existing.columns),
+                'new_columns': list(out.columns),
+                'old_sha256': sha256(target),
+            }
+            if execute and not retained_match:
+                raise ValueError('h2_8_to_4_retained_columns_differ: 교체 중단; 원천 및 값 확인 필요')
+        match = same_table(existing, out)
         if match:
             record['status'] = 'EXISTS_SAME'
         elif debt_source == 'hybrid' and not execute:
@@ -375,7 +371,14 @@ def ensure_h2(root: Path, config, *, execute: bool = False, log=print,
             timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
             backup = backup_dir / f'h2_{timestamp}.parquet'
             shutil.copy2(target, backup)
+            if sha256(backup) != sha256(target):
+                raise ValueError('h2_backup_sha256_mismatch')
             record['backup'] = str(backup)
+            old_manifest = target.with_suffix('.manifest.json')
+            if old_manifest.exists():
+                backup_manifest = backup.with_suffix('.manifest.json')
+                shutil.copy2(old_manifest, backup_manifest)
+                record['backup_manifest'] = str(backup_manifest)
 
         # 출력 검증을 완료한 뒤 원자적으로 교체해 중간 실패 시 파일 손상 방지.
         with tempfile.NamedTemporaryFile(suffix='.parquet', dir=target.parent, delete=False) as tmp:
