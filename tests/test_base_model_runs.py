@@ -49,12 +49,15 @@ class InputSetTests(unittest.TestCase):
     def test_six_sets_market_only_for_boosting(self):
         lin, boo = bmr.input_sets('linear'), bmr.input_sets('boosting')
         self.assertEqual(list(lin), ['base', 'base+h1', 'base+h3', 'base+h1+h3', 'base+h1+h3+h2', 'base+h1+h3+h2+h4'])
-        for m in ('mkt_ret', 'mkt_ret3', 'mkt_vol12', 'breadth', 'policy', 'policy_change', 'rate_change', 'epu_raw'):
+        for m in ('mkt_ret', 'mkt_ret3', 'mkt_vol12', 'breadth', 'policy', 'policy_change', 'epu_raw'):
             self.assertFalse(any(m in c for c in lin.values()))
             self.assertIn(m, boo['base+h1+h3+h2+h4'])
-        # 선형 주 세트: 종목 기본 20 + H1 3 + σ + H2 5(debt, policy_x_debt, debt_change, 변화×debt 2) + H4 1 = 30
-        self.assertEqual(len(lin['base+h1+h3+h2+h4']), 30)
-        self.assertEqual(len(boo['base+h1+h3+h2+h4']), 30 + 4 + 3 + 1)   # + 시장 공통 4, 월 공통 H2 3, EPU
+        # H2는 팀원 4개(main PR #10, 2026-11-24): 종목별 debt·policy_x_debt, 월 공통 policy·policy_change(부스팅만)
+        self.assertEqual([c for c in boo['base+h1+h3+h2'] if c not in boo['base+h1+h3']],
+                         ['debt', 'policy_x_debt', 'policy', 'policy_change'])
+        # 선형 주 세트: 종목 기본 20 + H1 3 + σ + H2 2 + H4 1 = 27
+        self.assertEqual(len(lin['base+h1+h3+h2+h4']), 27)
+        self.assertEqual(len(boo['base+h1+h3+h2+h4']), 27 + 4 + 2 + 1)   # + 시장 공통 4, 월 공통 H2 2, EPU
 
 
 class UnitTests(unittest.TestCase):
