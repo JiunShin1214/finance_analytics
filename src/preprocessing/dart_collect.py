@@ -1841,6 +1841,8 @@ RUN = Path("outputs/collection/DART_LIST_ONLY")
 
 
 LIST_RAW = Path("data/raw/opendart/list_only")
+# 2026-11-26: 시장 전체 목록(공시일 원천)은 계산 입력이라 data/ 아래에 둔다. dart_filings가 이 폴더들을 읽는다.
+MARKET_RUN = Path("data/raw/opendart/market_list")
 
 
 BASE = {"last_reprt_at": "N", "pblntf_ty": "A", "sort": "date",
@@ -2169,7 +2171,7 @@ class MarketListCollector(ListCollector):
         self.root = root.resolve()
         self.start, self.end = start, end
         self.windows = quarter_windows(start, end)
-        self.run = self.root / RUN / f"market_{start}_{end}"
+        self.run = self.root / MARKET_RUN / f"market_{start}_{end}"
         self.raw = self.root / LIST_RAW
         self.log_path, self.progress_path = self.run / "manifest.jsonl", self.run / "progress.json"
         self.lock, self.rate_lock = threading.RLock(), threading.Lock()
