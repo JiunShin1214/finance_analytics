@@ -67,7 +67,8 @@ def feature_specs(config, family: str) -> dict:
 
 
 def input_sets(family: str) -> dict:
-    """입력 세트 6개(사용자 확인 2026-11-21): 기본 / +H1 / +H3 / +H1+H3 / +H2 / +H2+H4. 부스팅만 월 공통 변수를 넣는다."""
+    """입력 세트 7개(사용자 확인 2026-11-21, 2026-11-26 +H4(H2 없음) 추가): 기본 / +H1 / +H3 / +H1+H3 / +H2 / +H2+H4 / +H4.
+    부스팅만 월 공통 변수를 넣는다. 'base+h1+h3+h4'는 H2를 뺀 주 세트(H2 채택 여부를 팀원 조건부 실험 뒤 정하기 위해)."""
     base = list(STOCK_FEATURES) + (list(MARKET_FEATURES) if family == 'boosting' else [])
     h2 = (
         ['debt', 'policy_x_debt']
@@ -79,7 +80,8 @@ def input_sets(family: str) -> dict:
     )
     h4 = ['h4_interaction'] + (['epu_raw'] if family == 'boosting' else [])
     return {'base': base, 'base+h1': base + H1, 'base+h3': base + ['sigma'], 'base+h1+h3': base + H1 + ['sigma'],
-            'base+h1+h3+h2': base + H1 + ['sigma'] + h2, 'base+h1+h3+h2+h4': base + H1 + ['sigma'] + h2 + h4}
+            'base+h1+h3+h2': base + H1 + ['sigma'] + h2, 'base+h1+h3+h2+h4': base + H1 + ['sigma'] + h2 + h4,
+            'base+h1+h3+h4': base + H1 + ['sigma'] + h4}
 
 
 def prepare(root: Path, config, family: str, *, input_transform: str, h3_grid=None, log=print) -> dict:

@@ -266,8 +266,8 @@ BASE_FEATURES:
       pairwise_pairs: {lambdarank_pair_method: mean, lambdarank_num_pair_per_sample: 8, seed: 0}   # pairwise_check_v1: 전체 쌍 0.1156 vs 표본 8개 0.1173(시드 sd 0.0006), 33분→8분
       save_models: true        # Fold마다 고른 모델(트리 500개) 저장 → SHAP
       shap:
-        sets: [base, base+h1+h3+h2+h4]          # 기본 세트·주 세트
-        interaction_sets: [base+h1+h3+h2+h4]    # 상호작용은 주 세트만, 세 모델 모두(LGB는 shap 패키지)
+        sets: [base, base+h1+h3+h2+h4, base+h1+h3+h4]          # 기본 세트·주 세트·H2 없는 주 세트(2026-11-26)
+        interaction_sets: [base+h1+h3+h2+h4, base+h1+h3+h4]    # 상호작용은 주 세트 2개만, 세 모델 모두(LGB는 shap 패키지)
         rows: outer_validation                  # 각 Fold 모델로 그 Fold 바깥 검증 행(2006~2021 이어 붙임)
 PERIODS:
   warmup:

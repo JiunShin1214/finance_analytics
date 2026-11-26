@@ -48,7 +48,11 @@ class FillTests(unittest.TestCase):
 class InputSetTests(unittest.TestCase):
     def test_six_sets_market_only_for_boosting(self):
         lin, boo = bmr.input_sets('linear'), bmr.input_sets('boosting')
-        self.assertEqual(list(lin), ['base', 'base+h1', 'base+h3', 'base+h1+h3', 'base+h1+h3+h2', 'base+h1+h3+h2+h4'])
+        self.assertEqual(list(lin), ['base', 'base+h1', 'base+h3', 'base+h1+h3', 'base+h1+h3+h2', 'base+h1+h3+h2+h4',
+                                     'base+h1+h3+h4'])
+        for fam in (lin, boo):   # H2 없는 주 세트 = 전체 주 세트에서 H2만 뺀 것(2026-11-26)
+            h2 = [c for c in fam['base+h1+h3+h2'] if c not in fam['base+h1+h3']]
+            self.assertEqual(fam['base+h1+h3+h4'], [c for c in fam['base+h1+h3+h2+h4'] if c not in h2])
         for m in ('mkt_ret', 'mkt_ret3', 'mkt_vol12', 'breadth', 'policy', 'policy_change', 'epu_raw'):
             self.assertFalse(any(m in c for c in lin.values()))
             self.assertIn(m, boo['base+h1+h3+h2+h4'])
