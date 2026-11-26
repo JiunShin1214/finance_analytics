@@ -1,5 +1,5 @@
 """H1+H3 vs +H2(8), +H2(4), +H2 score trained on 2009–2012.
-Requires earlier evaluate_h2_training_period_and_features outputs and the repository's model_test.
+Requires earlier run_h2_regime_fixed outputs and the repository's model_test.
 All target dates are development only. No shared code/data is modified.
 """
 from __future__ import annotations
@@ -48,22 +48,14 @@ def assert_window(d, a,b, minimum=20):
     old.check_window(d,a,b,min_stocks=minimum)
 
 
-def historical_specs(root,cfg,h2_archive,include_base=False):
-    archive = old.resolve_archive(root,h2_archive).relative_to(Path(root).resolve()).as_posix()
-    # Freeze historical H2 transformations: do not depend on current 4-feature specs.
-    base, specs = [], {}
-    if include_base:
-        from src.evaluation import base_model_runs as bmr
-        base = list(bmr.input_sets('boosting')['base'])
-        current = bmr.feature_specs(cfg,'boosting')
-        specs = {n:current[n] for n in base}
-    specs.update({n:{'path':archive,'transform':'input' if n=='debt_change' else 'none'} for n in old.EIGHT})
-    return specs,base
-
-
-def prepare(root,cfg,include_base=False,h2_archive=old.ARCHIVE_PATH):
-    from src.evaluation import model_test as mt
-    specs,base = historical_specs(root,cfg,h2_archive,include_base)
+def prepare(root,cfg,include_base=False):
+    from src.evaluation import model_test as mt, base_model_runs as bmr
+    full = bmr.feature_specs(cfg,'boosting')
+    if not set(old.EIGHT) <= set(full):
+        raise ValueError('Pull latest main: H2 eight-feature specs missing')
+    base = list(bmr.input_sets('boosting')['base']) if include_base else []
+    names = [*base,*old.EIGHT]
+    specs = {n:full[n] for n in names}
     p = mt.prepare_inputs(root,cfg,extra_features=specs,input_transform='rank',fill_missing=False)
     labels = mt.boosting_labels(p)
     d = p['data'].copy()
@@ -81,7 +73,7 @@ def prepare(root,cfg,include_base=False,h2_archive=old.ARCHIVE_PATH):
     return d,labels,base
 
 
-def load_score(folder, kind, d, root, cfg, h2_archive=old.ARCHIVE_PATH):
+def load_score(folder, kind, d, root, cfg):
     audit_path=folder/'run_audit.json'; fit_path=folder/'fit_audit.csv'; pred_path=folder/'predictions.csv'
     audit=json.loads(audit_path.read_text(encoding='utf-8-sig'))
     if (audit.get('target_month_training_fixed')!=['2009-01','2012-12'] or
@@ -92,16 +84,10 @@ def load_score(folder, kind, d, root, cfg, h2_archive=old.ARCHIVE_PATH):
         raise ValueError(f'Unexpected H2 prior experiment: {folder}')
     # Path separators differ on Windows; verify data bytes, not path spelling.
     saved={k.replace('\\','/'):v for k,v in audit['inputs_sha256'].items()}
-    panel_path=Path(cfg['PATHS']['panel'])
-    if saved.get(panel_path.as_posix().replace('\\','/')) != digest(root/panel_path):
-        raise ValueError(f'Prior H2 model input hash differs: {panel_path}')
-    archive_path=old.resolve_archive(root,h2_archive)
-    # Previous runs recorded PATHS.h2; renamed/re-run experiments record archive path.
-    # Resolve using the audit's explicit archive path or the historical production key.
-    # Always compare bytes against the actual archive, never against production h2.parquet.
-    audit_key=audit.get('h2_archive_path',cfg['PATHS']['h2']).replace('\\','/')
-    if saved.get(audit_key)!=digest(archive_path):
-        raise ValueError(f'Prior H2 model input hash differs: {archive_path}; restore matching original archive or rerun standalone')
+    for key in ('panel','h2'):
+        path=Path(cfg['PATHS'][key]); norm=path.as_posix().replace('\\','/')
+        if saved.get(norm)!=digest(root/path):
+            raise ValueError(f'Prior H2 model input hash differs: {path}; rerun H2 standalone before integration')
     f=pd.read_csv(fit_path,dtype=str)
     f=f.loc[f.model.eq(kind)&f.arm.eq('fixed_4')]
     if len(f)!=1: raise ValueError('Expected exactly one prior fixed_4 fit')
@@ -120,7 +106,7 @@ def load_score(folder, kind, d, root, cfg, h2_archive=old.ARCHIVE_PATH):
         raise ValueError(f'H1/H3 and H2 evaluation keys differ: {m._merge.value_counts().to_dict()}; inspect eligibility, do not silently intersect')
     if not np.allclose(m.y,m.y_prior,atol=1e-12,rtol=1e-10): raise ValueError('Prior score target mismatch')
     score=d[KEY].merge(pred[KEY+['score']],on=KEY,how='left',validate='one_to_one').score.to_numpy(float)
-    return score, {'folder':str(folder),'prior_train_rows':int(r.train_rows),'prior_fit_end':r.train_actual_end,'prior_h2_audit_key':audit_key,'h2_archive_sha256':digest(archive_path),
+    return score, {'folder':str(folder),'prior_train_rows':int(r.train_rows),'prior_fit_end':r.train_actual_end,
                    'sha256':{x.name:digest(x) for x in (audit_path,fit_path,pred_path)}}
 
 
@@ -216,7 +202,6 @@ def main():
     from src.h2.preprocessing.build_bok_rate_history import make
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--root',type=Path,default=Path('.'));p.add_argument('--models',default='lgb_rankreg')
-    p.add_argument('--h2-archive',type=Path,default=old.ARCHIVE_PATH)
     p.add_argument('--lgb-run',type=Path,default=Path('outputs/model_results/h2/regime_lgb500'))
     p.add_argument('--xgb-run',type=Path,default=Path('outputs/model_results/h2/regime_xgb500'))
     p.add_argument('--out',type=Path,default=Path('outputs/model_results/h2/regime_integrated_v1'))
@@ -230,12 +215,10 @@ def main():
     if (int(run['trees']),int(run['depth']),float(run['learning_rate']))!=(500,3,.01): raise ValueError('expected 500 trees, depth 3, lr .01')
     kinds=[s.strip() for s in a.models.split(',') if s.strip()]
     if not kinds or len(set(kinds))!=len(kinds) or not set(kinds)<=set(old.KINDS): raise ValueError('invalid model list')
-    archive=old.resolve_archive(root,a.h2_archive)
-    print('Historical H2 archive:',archive,'| SHA256:',digest(archive))
-    d,labels,base=prepare(root,cfg,a.include_base,archive)
+    d,labels,base=prepare(root,cfg,a.include_base)
     sources={};score={}
     for kind in kinds:
-        score[kind],sources[kind]=load_score(root/(a.lgb_run if kind=='lgb_rankreg' else a.xgb_run),kind,d,root,cfg,archive)
+        score[kind],sources[kind]=load_score(root/(a.lgb_run if kind=='lgb_rankreg' else a.xgb_run),kind,d,root,cfg)
     coverage=d.groupby('target_month').agg(eligible_rows=('y','size'),common_rows=('common','sum')).reset_index()
     print('H2 prior score provenance:',{k:v['prior_train_rows'] for k,v in sources.items()})
     print('Integrated 2013–2021 rows:',len(d),'common:',int(d.common.sum()),'minimum monthly common:',int(coverage.common_rows.min()))
@@ -255,9 +238,9 @@ def main():
     out.mkdir(parents=True,exist_ok=False)
     for name,frame in [('predictions',pred),('monthly_rankic',m),('model_summary',s),('paired_comparisons',c),('fit_audit',fit),('h3_selection',cand),('monthly_coverage',coverage)]:
         frame.to_csv(out/f'{name}.csv',index=False,encoding='utf-8-sig')
-    paths=[cfg_path,archive,*[root/cfg['PATHS'][x] for x in ['panel','eligibility','h1_components']+(['base_features'] if a.include_base else [])]]
+    paths=[cfg_path,*[root/cfg['PATHS'][x] for x in ['panel','eligibility','h1_components','h2']+(['base_features'] if a.include_base else [])]]
     audit={'models':kinds,'arms':ARMS,'train_sample':a.train_sample,'base_controls':base,'validation':[f'{FIRST_OUT}-01',last],
-           'h2_archive_path':archive.relative_to(root).as_posix(),'h2_score_sources':sources,'tree_count':500,'depth':3,'learning_rate':.01,'smoke':a.smoke,'test_used':False,
+           'h2_score_sources':sources,'tree_count':500,'depth':3,'learning_rate':.01,'smoke':a.smoke,'test_used':False,
            'h3_selection':'baseline inner IC at 500 trees, shared across arms, ties longer span; no refit',
            'periods':{k:sorted(v) for k,v in period_sets(last).items()},'input_sha256':{str(x):digest(x) for x in paths},
            'code_sha256':{str(x):digest(x) for x in [Path(__file__),Path(old.__file__),root/'src/evaluation/model_test.py',root/'src/models/boosting.py']},
