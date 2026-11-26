@@ -1,0 +1,32 @@
+# Frozen development candidate. Not a final-test/production authorization.
+h2_specialist:
+  enabled_for_submission: false
+  feature_path: data/processed/h2.parquet
+  features: [debt, policy, policy_change, policy_x_debt, debt_change, rate_change, policy_change_x_debt, rate_change_x_debt]
+  rank_transform: [debt_change]
+  input_transform: rank
+  fill_missing: true
+  gate: hike_1m
+  training: annual_expanding
+  min_train_months: 5
+  min_stocks: 20
+  alpha: 0.05
+  preferred_candidate: xgb_pairwise
+  models: [lgb_rankreg, xgb_rankreg, xgb_pairwise]
+  run:
+    trees: 500
+    depth: 3
+    learning_rate: 0.01
+    xgb_l2: 0
+    pairwise_pairs: {lambdarank_pair_method: mean, lambdarank_num_pair_per_sample: 8, seed: 0}
+  development_target_start: '2006-01'
+  development_target_end: '2021-12'
+  reference: outputs/model_results/h2/exante_universe_v2
+  reference_sha256:
+    fit_audit.csv: 94c91d9ceb2cd5bbc782e2d1a3310f88fb78e7bfdbb22e4a6decad37a7c8b2de
+    run_audit.json: 20b13e65c3b44b451b0b38474056d14ece7f7394fc78837695b78231d4ce4e54
+    exante_active_predictions.csv: 2c850178494c80fcd0f377ee38954c2e78e46298cc1e8009f17aa386fe8444d6
+  audited_inputs_sha256:
+    data/interim/panel.parquet: 79e3eef1af555d72cc6a609e7084a30da53f4a66ab3d7ab15715679d6289dd2d
+    data/interim/eligibility.parquet: 1ad742da0981d3e5775553b38149ea29a6183543c7066f8102a3abf94da5d841
+    data/processed/h2.parquet: f16815ef17cd38d7e050fbc8cfccdf98841a463d3630c2c8e971216d7680de62
