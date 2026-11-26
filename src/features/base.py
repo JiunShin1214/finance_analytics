@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from src.preprocessing import dataguide_files
 from src.preprocessing.dataguide_extract import iter_rows, read_sheet, sha256
 
 STOCK_FEATURES = ('str', 'ltr', 'high52', 'turnover', 'ln_dvol', 'illiq', 'ivol', 'max_ret', 'beta', 'ln_price', 'roa', 'ep', 'dy', 'rmw',
@@ -166,12 +167,10 @@ def kospi_monthly(root: Path, cfg: dict) -> pd.Series:
     return level
 
 
-def total_return_monthly(root: Path, cfg: dict) -> pd.DataFrame:
-    """DataGuide 수정주가수익률(현금배당포함), 종목×월, 소수."""
+def total_return_monthly(root: Path, cfg: dict, *, include_test: bool = False) -> pd.DataFrame:
+    """DataGuide 수정주가수익률(현금배당포함), 종목×월, 소수. 파일은 항목 코드로 찾는다(dataguide_files)."""
     rows = []
-    for p in cfg['inputs']['total_return_xlsx']:
-        path = root / p
-        guard_development(path)
+    for path in dataguide_files.paths(root, 'total_return', include_test=include_test):
         codes = {}
         for i, r in iter_rows(path):
             keys = sorted(r)
@@ -186,10 +185,10 @@ def total_return_monthly(root: Path, cfg: dict) -> pd.DataFrame:
 
 # ---------------------------------------------------------------- 연간 재무(ROA, E/P)
 
-def annual_statements(root: Path) -> pd.DataFrame:
+def annual_statements(root: Path, *, include_test: bool = False) -> pd.DataFrame:
     """결정 ①③④: H1 자기자본과 같은 공시일·재무제표 선택(equity_dating.build)의 사업보고서(연간) 행."""
     from src.preprocessing.equity_dating import build
-    panel, _, _, _ = build(root)   # 약 8~9분(2026-11-21 측정 506초)
+    panel, _, _, _ = build(root, include_test=include_test)   # 약 8~9분(2026-11-21 측정 506초)
     return select_annual(panel)
 
 
@@ -203,14 +202,13 @@ def select_annual(panel: pd.DataFrame) -> pd.DataFrame:
     return a[['code', 'stock_code', 'fy', 'month', 'std', 'tier', 'side', 'available_month', 'rcept_dt', 'cons_assets', 'sep_assets']]
 
 
-def annual_flows(root: Path, cfg: dict) -> pd.DataFrame:
-    """(code, fy, std, side) → 연간 지배주주 순이익, 영업이익(분기 누적의 결산 행)."""
+def annual_flows(root: Path, cfg: dict, *, include_test: bool = False) -> pd.DataFrame:
+    """(code, fy, std, side) → 연간 지배주주 순이익, 영업이익(분기 누적의 결산 행). 파일은 항목 코드로 찾는다."""
     parts = []
     for key, spec in cfg['inputs']['flows_xlsx'].items():
         std, side = key.split('_')
-        path = root / EXTERNAL / spec['file']
-        guard_development(path)
-        f, _ = read_sheet(path, {str(k): v for k, v in spec['items'].items()})
+        f, _ = dataguide_files.read_role(root, f'flows_{key}', {str(k): v for k, v in spec['items'].items()},
+                                         include_test=include_test)
         f = f[f.quarter.eq('결산')]
         f = f.assign(**{i: np.nan for i in FLOW_ITEMS if i not in f})
         parts.append(f[['code', 'fy', *FLOW_ITEMS]].assign(std=std, side=side))
@@ -242,18 +240,17 @@ def read_hist_industry(path: Path, item: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def financial_flags(root: Path, cfg: dict) -> tuple[dict, dict]:
+def financial_flags(root: Path, cfg: dict, *, include_test: bool = False) -> tuple[dict, dict]:
     """금융업 판정(2026-11-23 사용자 B): KSIC 11차 대분류 K(Static, 현재 분류)이고 그 사업보고서 결산월의 시장 대표 업종(Hist.)도
     금융일 때만 금융. 시점은 재무 피처와 같은 사업보고서 공시월(결정 A). Hist. 값이 없는 결산월은 그 회사의 가장 가까운
     이전 결산월 값을 이어 쓰고, 이전 값도 없으면 Static K를 따른다."""
     from src.preprocessing.dataguide_extract import statement_month
     ind = cfg['inputs']['industry']
-    sp, hp = root / EXTERNAL / ind['static_file'], root / EXTERNAL / ind['hist_file']
-    guard_development(sp)
-    guard_development(hp)
-    s, _ = read_sheet(sp, {ind['ksic_section_item']: 'ksic'}, text=('ksic',))
+    s, _ = dataguide_files.read_role(root, 'industry_static', {ind['ksic_section_item']: 'ksic'}, text=('ksic',),
+                                     include_test=include_test)
     static_k = {c[1:] for c in s.code[s.ksic.eq('K')]}
-    h = read_hist_industry(hp, ind['hist_item'])
+    hs = [read_hist_industry(p, ind['hist_item']) for p in dataguide_files.paths(root, 'industry_hist', include_test=include_test)]
+    h = hs[0] if len(hs) == 1 else pd.concat(hs, ignore_index=True).drop_duplicates(['code', 'fm', 'fy'])
     h = h[h.industry.notna()]
     no_fm = int(h.fm.isna().sum())   # 결산월 빈칸(2026-11-23 확인: 9행, 일반서비스 2개사)은 결산월을 정할 수 없어 뺀다
     h = h[h.fm.notna()]
@@ -344,7 +341,8 @@ def equity_asof(root: Path, config: dict) -> pd.Series:
 
 # ---------------------------------------------------------------- 조립
 
-def build_base(root: Path, config: dict, *, statements: pd.DataFrame | None = None) -> tuple[pd.DataFrame, dict]:
+def build_base(root: Path, config: dict, *, statements: pd.DataFrame | None = None,
+               include_test: bool = False) -> tuple[pd.DataFrame, dict]:
     cfg = config['BASE_FEATURES']
     root = Path(root)
     first, last = cfg['base_months']
@@ -384,16 +382,16 @@ def build_base(root: Path, config: dict, *, statements: pd.DataFrame | None = No
     del daily
 
     # 배당수익률(C-4): 월 배당수익 = (1+배당 포함 수익률)/(1+주가수익률) − 1, × 전월 말 시가총액, 최근 12개월 합 / t월 말 시가총액
-    tot = total_return_monthly(root, cfg).set_index(['stock_id', 'month']).r_tot
+    tot = total_return_monthly(root, cfg, include_test=include_test).set_index(['stock_id', 'month']).r_tot
     div_ret = (1 + tot.reindex(dmi.index)) / (1 + dmi.r_px) - 1
     capw = _wide(p.market_cap.where(p.market_cap.gt(0)), all_months)
     amt12 = (_wide(div_ret, all_months) * capw.shift(1)).rolling(12, min_periods=12).sum()
     feats['dy'] = _long(amt12 / capw, 'dy')
 
     # 재무(ROA, E/P)
-    stmts = statements if statements is not None else annual_statements(root)
-    fin, fin_record = financial_flags(root, cfg)
-    acc = accounting_asof(stmts, annual_flows(root, cfg), months, last_days, fin).set_index(['stock_id', 'base_month'])
+    stmts = statements if statements is not None else annual_statements(root, include_test=include_test)
+    fin, fin_record = financial_flags(root, cfg, include_test=include_test)
+    acc = accounting_asof(stmts, annual_flows(root, cfg, include_test=include_test), months, last_days, fin).set_index(['stock_id', 'base_month'])
     feats['roa'] = acc.ni_owner / acc.assets_prev.where(acc.assets_prev.gt(0))
     cap_at = p.market_cap.where(p.market_cap.gt(0)).reindex(pd.MultiIndex.from_tuples(acc.index, names=['stock_id', 'month']))
     feats['ep'] = pd.Series(acc.ni_owner.to_numpy() / cap_at.to_numpy(), index=acc.index)
@@ -422,7 +420,7 @@ def build_base(root: Path, config: dict, *, statements: pd.DataFrame | None = No
     out = add_reasons(out, dm, acc, equity)
     record = {'rows': int(len(out)), 'base_months': [first, last], 'stocks': int(out.stock_id.nunique()),
               'checks': checks(out, dm, mkt, lvl, ret, acc, stmts), 'industry': fin_record,
-              'inputs_sha256': input_hashes(root, config)}
+              'inputs_sha256': input_hashes(root, config, include_test=include_test)}
     return out.sort_values(['stock_id', 'base_month']).reset_index(drop=True), record
 
 
@@ -483,18 +481,18 @@ def checks(out, dm, mkt, lvl, ret, acc, stmts) -> dict:
     return c
 
 
-def input_hashes(root: Path, config: dict) -> dict:
+def input_hashes(root: Path, config: dict, *, include_test: bool = False) -> dict:
     cfg = config['BASE_FEATURES']['inputs']
-    files = [config['PATHS']['panel'], config['PATHS']['trading_days'], config['PATHS']['asof'], cfg['kospi_index_csv'],
-             *cfg['total_return_xlsx'],
-             *[(EXTERNAL / cfg['industry'][k]).as_posix() for k in ('static_file', 'hist_file')],
-             *[(EXTERNAL / v['file']).as_posix() for v in cfg['flows_xlsx'].values()]]
+    files = [config['PATHS']['panel'], config['PATHS']['trading_days'], config['PATHS']['asof'], cfg['kospi_index_csv']]
+    roles = ['total_return', 'industry_static', 'industry_hist', *[f'flows_{k}' for k in cfg['flows_xlsx']]]
+    files += [p.relative_to(root).as_posix() for r in roles for p in dataguide_files.paths(root, r, include_test=include_test)]
     return {f: sha256(root / f) for f in files}
 
 
-def ensure_base(root: Path, config: dict, *, execute: bool = False, statements: pd.DataFrame | None = None, log=print) -> dict:
+def ensure_base(root: Path, config: dict, *, execute: bool = False, statements: pd.DataFrame | None = None, log=print,
+                include_test: bool = False) -> dict:
     root = Path(root)
-    out, record = build_base(root, config, statements=statements)
+    out, record = build_base(root, config, statements=statements, include_test=include_test)
     target = root / config['PATHS']['base_features']
     if execute:
         target.parent.mkdir(parents=True, exist_ok=True)

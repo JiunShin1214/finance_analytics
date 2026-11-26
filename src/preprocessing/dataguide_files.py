@@ -122,6 +122,46 @@ def scan(root: Path, config: dict, *, include_test: bool = False) -> dict:
     return {"files": files, "unknown": unknown, "problems": problems, "roles": table}
 
 
+_CACHE: dict = {}
+
+
+def paths(root: Path, role: str, *, include_test: bool = False) -> list[Path]:
+    """계산 코드가 쓰는 입구: 그 종류의 파일들(root 기준 절대 경로, 이름 순). 빠진 항목·없는 종류가 있으면 멈춘다.
+    한 실행 안에서는 분류를 한 번만 한다(파일 머리만 읽어 약 2초)."""
+    key = (Path(root).resolve(), include_test)
+    if key not in _CACHE:
+        config = yaml.safe_load((Path(root) / "config/experiment.yaml").read_text(encoding="utf-8"))
+        scanned = scan(Path(root), config, include_test=include_test)
+        if scanned["problems"]:
+            raise ValueError("dataguide_files_problems:\n" + report(scanned, scanned["problems"]))
+        _CACHE[key] = scanned["files"]
+    return [Path(root) / p for p in _CACHE[key][role]]
+
+
+def read_role(root: Path, role: str, items: dict[str, str], *, text: tuple[str, ...] = ("fm",),
+              include_test: bool = False) -> tuple[pd.DataFrame, list[dict]]:
+    """그 종류의 파일을 모두 read_sheet로 읽어 합친다. 파일이 하나면 read_sheet 결과 그대로(행 순서까지).
+    여럿이면 (code, fy, quarter)가 겹치는 행의 값이 같아야 하고(차이 1 이하, 한쪽 빈칸은 다른 쪽으로 채움) 다르면 멈춘다."""
+    from src.preprocessing.dataguide_extract import sha256
+    frames, info = [], []
+    for p in paths(root, role, include_test=include_test):
+        f, i = read_sheet(p, items, text=text)
+        frames.append(f)
+        info.append({"file": p.relative_to(root).as_posix(), "sha256": sha256(p), "bytes": p.stat().st_size, **i})
+    if len(frames) == 1:
+        return frames[0], info
+    key = ["code", "fy", "quarter"]
+    both = pd.concat(frames, ignore_index=True)
+    for c in items.values():
+        if c in text or c not in both:
+            continue
+        g = both[both[c].notna()].groupby(key)[c]
+        spread = g.max() - g.min()
+        if (spread > 1).any():
+            raise ValueError(f"dataguide_overlap_conflict:{role}:{c}:{spread[spread > 1].index[:3].tolist()}")
+    return both.groupby(key, as_index=False, sort=False).first(), info
+
+
 def check_values(root: Path, scanned: dict, *, need_fy: int | None = None) -> list[dict]:
     """재무 자료: 파일 안 중복, 파일끼리 값 충돌(단위), 회계연도 범위."""
     problems, key = [], ["code", "fy", "quarter"]

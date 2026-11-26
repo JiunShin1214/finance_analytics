@@ -85,7 +85,13 @@ def merge(existing: pd.DataFrame, new: pd.DataFrame) -> tuple[pd.DataFrame, dict
         if not (old[col].astype(str).to_numpy() == both[col].astype(str).to_numpy()).all():
             raise ValueError(f"dart_filing_identity_conflict:{col}")
     promote = old.index[~old.listed_in_public_index.astype(bool).to_numpy()]
-    out.loc[out.receipt_id.isin(promote), "listed_in_public_index"] = True
+    # 원문 추출로만 알던 공시가 공개 목록에 나오면 공개 목록의 값(회사명·종목코드·보고서 이름·종류·기간·출처)으로 채운다.
+    # 11-08 prepare_data와 같음(공개 목록 행이 먼저, 추출 정보는 disclosure_format만). 접수번호·회사·접수일은 위에서 같음을 확인.
+    fill = ["corp_name", "stock_code", "report_name", "report_kind", "report_period_label", "revision", "source_path", "source_sha256"]
+    rows = out.receipt_id.isin(promote)
+    src = new.set_index("receipt_id").loc[out.loc[rows, "receipt_id"], fill]
+    out.loc[rows, fill] = src.to_numpy()
+    out.loc[rows, "listed_in_public_index"] = True
     added = new[~known]
     out = pd.concat([out, added[list(DART_FILING_INPUT_COLUMNS)]], ignore_index=True)
     for col in DART_FILING_INPUT_COLUMNS:

@@ -375,10 +375,17 @@ def resolve_differences(panel: pd.DataFrame, root: Path, raw_paths: dict[str, st
             out[i] = "keep_dataguide:dart_read_other_period"
         elif any(same_amount(r.equity, r.dart_equity * k) for k in (1e3, 1e6, 1e-3, 1e-6)):
             out[i] = "keep_dataguide:dart_unit_slip"
-        elif any(_printed(r.equity, _original_text(root, raw_paths[x])) for x in r.same_day_receipts.split(";") if raw_paths.get(x)):
-            out[i] = "keep_dataguide:printed_in_original"
         else:
-            out[i] = "use_dart_first"
+            # 2026-11-26: 원문을 지운 공시(11-04 정리, 근거 원문만 보존)는 인쇄 여부를 확인할 수 없다. 확인할 수 없으면
+            # DART 값으로 바꾸지 않고 DataGuide 값을 쓴다(원문 대조가 없는 기간과 같은 처리). 표시해서 개수를 센다.
+            paths = [raw_paths[x] for x in r.same_day_receipts.split(";") if raw_paths.get(x)]
+            have = [p for p in paths if (root / p).is_file()]
+            if any(_printed(r.equity, _original_text(root, p)) for p in have):
+                out[i] = "keep_dataguide:printed_in_original"
+            elif len(have) < len(paths):
+                out[i] = "keep_dataguide:original_missing"
+            else:
+                out[i] = "use_dart_first"
     return out
 
 
@@ -487,13 +494,14 @@ def usable_month(receipt: str | None, last_days: pd.Series) -> str | None:
     return (month + int(late)).strftime("%Y-%m")
 
 
-def build(root: Path, raw: Path = RAW) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
+def build(root: Path, raw: Path = RAW, *, include_test: bool = False) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
+    """include_test: test_sealed 폴더의 DataGuide 파일도 쓴다(모델 고정 뒤 테스트 입력을 만들 때만).
+    파일은 이름이 아니라 항목 코드로 찾는다(dataguide_files, 2026-11-26). 종류마다 파일이 여럿이면 합친다."""
+    from src.preprocessing import dataguide_files
     frames, inputs = {}, {}
-    for role, (name, standard, items) in SOURCES.items():
-        path = root / raw / name
-        frames[role], info = read_sheet(path, items)
-        inputs[role] = {"file": (raw / name).as_posix(), "sheet": data_sheet(path), "sha256": sha256(path), "bytes": path.stat().st_size,
-                        "standard": standard, "items": items, **info}
+    for role, (_, standard, items) in SOURCES.items():
+        frames[role], files = dataguide_files.read_role(root, role, items, include_test=include_test)
+        inputs[role] = {"files": files, "standard": standard, "items": items}
     overrides = load_overrides(root / OVERRIDES)
     panel = combine(frames)
     without_fiscal_month = panel.attrs.get("rows_without_fiscal_month")

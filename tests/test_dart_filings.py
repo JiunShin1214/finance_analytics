@@ -73,7 +73,9 @@ class DartFilingsMergeTests(unittest.TestCase):
         t = pd.read_parquet(self.root / df.DART_FILINGS)
         self.assertEqual(t.receipt_id.tolist(), ["20210315000001", "20220315000002", "20220330000003"])   # 기존 순서 + 새 공시
         self.assertTrue(bool(t.listed_in_public_index.iloc[1]))                     # 추출로만 알던 공시가 공개 목록에 나옴
-        self.assertEqual(t.disclosure_format.iloc[1], "document_only")              # 기존 값은 그대로
+        self.assertEqual(t.disclosure_format.iloc[1], "document_only")              # 추출 정보는 그대로
+        self.assertEqual(t.source_path.iloc[1], "data/raw/opendart/list_only/n.json")  # 비어 있던 공개 목록 값은 채움
+        self.assertFalse(t.iloc[1][["corp_name", "stock_code", "report_kind"]].isna().any())
         self.assertEqual(t.revision.iloc[2], "기재정정")
         self.assertTrue(pd.isna(t.disclosure_format.iloc[2]))
         self.assertEqual(list(t.columns), list(DART_FILING_INPUT_COLUMNS))

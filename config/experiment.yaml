@@ -171,17 +171,15 @@ BASE_FEATURES:
   inputs:
     marcap_dir: data/raw/marcap/                       # 일별, 2000~2021. 종목코드는 6자리로 맞춤(2000-01~05 파일은 앞 0 누락)
     kospi_index_csv: data/raw/external_data/코스피_지수_20261008162112.csv   # 월말 지수 2000-02~2021-12
-    total_return_xlsx: [data/raw/external_data/1999_2010_코스피 수정수익률.xlsx, data/raw/external_data/2011_2021_코스피 수정수익률.xlsx]   # DataGuide S410007900 수정주가수익률(현금배당포함), 월간
+    # DataGuide 파일(손익·현금흐름, 업종, 수정주가수익률 S410007900)은 이름이 아니라 항목 코드로 찾는다(src/preprocessing/dataguide_files, 2026-11-26).
     flows_xlsx:   # DataGuide 연간 손익·현금흐름(분기 누적의 결산 행). (기준, 재무제표) → 파일, {항목 코드: 개념}
-      KGAAP_cons: {file: 1999_2010_연결_feature.xlsx, items: {'4000960002': ni_owner, '4000950000': op_income, '4000940000': sales, '4000945000': cogs, '4000961000': cfo}}
-      KGAAP_sep: {file: 1999_2010_개별_feature.xlsx, items: {'1000960000': ni_owner, '1000950000': op_income, '1000940000': sales, '1000945000': cogs, '1000961000': cfo}}   # 개별은 지배·비지배 구분 없음
-      KIFRS_cons: {file: 2009_2021_연결_feature.xlsx, items: {'6000908004': ni_owner, '6000906001': op_income, '6000904001': sales, '6000905001': cogs, '6000909001': cfo}}
-      KIFRS_sep: {file: 2009_2021_개별_feature.xlsx, items: {'3000908004': ni_owner, '3000906001': op_income, '3000904001': sales, '3000905001': cogs, '3000909001': cfo}}
+      KGAAP_cons: {items: {'4000960002': ni_owner, '4000950000': op_income, '4000940000': sales, '4000945000': cogs, '4000961000': cfo}}
+      KGAAP_sep: {items: {'1000960000': ni_owner, '1000950000': op_income, '1000940000': sales, '1000945000': cogs, '1000961000': cfo}}   # 개별은 지배·비지배 구분 없음
+      KIFRS_cons: {items: {'6000908004': ni_owner, '6000906001': op_income, '6000904001': sales, '6000905001': cogs, '6000909001': cfo}}
+      KIFRS_sep: {items: {'3000908004': ni_owner, '3000906001': op_income, '3000904001': sales, '3000905001': cogs, '3000909001': cfo}}
     industry:   # 2026-11-23 다운로드·결정. 금융 = KSIC 대분류 K(Static) 이고 그 결산 연도 Hist.도 금융. Hist. 빈칸은 이전 결산 값, 없으면 Static
-      static_file: 업종_KSIC11_static.xlsx          # 기업정보(Static), 현재 분류(2,881사)
-      ksic_section_item: CP10001394                  # 한국표준산업분류코드11차(대분류)
-      hist_file: 1999_2021_시장대표업종.xlsx         # 기업정보(회계기준 전용), 결산 연도별
-      hist_item: CP30900010                          # 시장 대표 업종(Hist.): KRX 분류(2017년부터 지주회사를 금융으로 분류) → 판정 보조로만
+      ksic_section_item: CP10001394                  # 한국표준산업분류코드11차(대분류). 기업정보(Static), 현재 분류(2026-11 받은 파일 2,881사)
+      hist_item: CP30900010                          # 시장 대표 업종(Hist.), 기업정보(회계기준 전용) 결산 연도별: KRX 분류(2017년부터 지주회사를 금융으로 분류) → 판정 보조로만
   common_rules:   # 재무 피처 공통 결정 ①~④
     filing_time: h1_equity_rule        # ① DART 최초 접수일(equity_dating), P4 마지막 거래일 이후 접수는 다음 달, P3 기준일+18개월 그 달 말일 만료
     income_period: annual              # ② 연간(결산) 값. 근거 RMW(Fama·French 2015)·GP/A(Novy-Marx 2013) 원 정의
