@@ -95,6 +95,14 @@ def classify(codes: set[str], table: dict[str, dict[str, str]]) -> tuple[str | N
     return best, sorted(set(table[best]) - codes)
 
 
+def complete_roles(codes: set[str], table: dict[str, dict[str, str]]) -> list[str]:
+    """필요 코드를 모두 갖춘 종류 전부. 다른 완전 종류의 코드에 포함되는 종류는 뺀다.
+    예: 테스트 기간 연결 파일 하나에 재무상태표 6개 + 손익·현금흐름 5개 항목이 함께 있으면 두 종류 모두(2026-11-27).
+    결산월 하나만 필요한 'K-GAAP 결산월'은 K-IFRS 재무상태표 파일(결산월 포함)에 붙지 않는다."""
+    full = [r for r in table if set(table[r]) <= codes]
+    return [r for r in full if not any(o != r and set(table[r]) < set(table[o]) for o in full)]
+
+
 def scan(root: Path, config: dict, *, include_test: bool = False) -> dict:
     """external_data 아래 엑셀 전부(하위 폴더 포함) -> 종류별 파일과 문제."""
     table = roles(config)
@@ -107,6 +115,11 @@ def scan(root: Path, config: dict, *, include_test: bool = False) -> dict:
             codes = head_codes(path)
         except Exception as error:          # 엑셀이 아니거나 깨진 파일
             problems.append({"kind": "unreadable", "file": rel.as_posix(), "detail": type(error).__name__})
+            continue
+        full = complete_roles(codes, table)
+        if len(full) > 1:
+            for role in full:
+                files[role].append(rel)
             continue
         role, missing = classify(codes, table)
         if role is None:

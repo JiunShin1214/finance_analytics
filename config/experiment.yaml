@@ -19,6 +19,13 @@ PATHS:
       raw_month_end_shares_outstanding: data/raw/train_2001_2021__raw_month_end_shares_outstanding.csv
       company_name: data/raw/train_2001_2021__company_name.csv
       isin: data/raw/train_2001_2021__isin.csv
+    test_2022_2025:   # 최종 표(--final)에서만 읽음. 개발 표·학습은 위 두 묶음만(src/data_io.py) [2026-11-26]
+      adjusted_monthly_return: data/raw/test_2022_2025__adjusted_monthly_return.csv
+      raw_month_end_market_cap: data/raw/test_2022_2025__raw_month_end_market_cap.csv
+      raw_month_end_price: data/raw/test_2022_2025__raw_month_end_price.csv
+      raw_month_end_shares_outstanding: data/raw/test_2022_2025__raw_month_end_shares_outstanding.csv
+      company_name: data/raw/test_2022_2025__company_name.csv
+      isin: data/raw/test_2022_2025__isin.csv
   security_map_csv: data/raw/security_map.csv
   dart_csv: data/raw/dart.csv
   documents_csv: data/raw/documents.csv
@@ -159,6 +166,9 @@ H4:
   # 2026-11-21: 팀원 산출 data/processed/h4_epu_current.parquet 사용. 기준월 t에 EPU(t)를 붙임(팀원 의도, main 코드·README의 t−1과 다름).
   # 한계: EPU(t)는 t월 기사로 만들지만 지수 공표는 t월 이후일 수 있어 PIT 논란 가능 → 보고서에 명시, t−1 버전 강건성 점검은 선택.
   definition: {epu: 'epu_raw (월 공통, 기준월 t에 EPU(t))', interaction: 'h4_interaction = mom × epu_raw'}
+  epu_xlsx: data/raw/external_data/Korea_Overall_EPU.xlsx   # Cho–Kim(2023), 1990-01~2025-11 [2026-11-26 받음]. 2021-11까지 팀원 파일과 값 동일
+  epu_lag_months: 0                   # 기준월 t에 EPU(t − 0). 1이면 t−1(강건성 점검용)
+  base_months: ['2000-12', '2021-11']  # 개발(src/features/h4.py 기본, PATHS.h4와 대조). --final은 끝을 자료 끝의 전달로(src.periods)
   model_input_transform: none   # 두 열 모두 값 그대로(팀원 README). 월별 순위·z로 바꾸면 h4_interaction이 mom과 같아짐(EPU가 월 공통)
   search_spec: null
   uncertainty_lexicon: null
@@ -170,7 +180,7 @@ BASE_FEATURES:
   base_months: ['2000-01', '2021-11']   # 기준월 2021-12(목표월 2022-01)는 테스트 기간이라 만들지 않음(H2와 같음)
   inputs:
     marcap_dir: data/raw/marcap/                       # 일별, 2000~2021. 종목코드는 6자리로 맞춤(2000-01~05 파일은 앞 0 누락)
-    kospi_index_csv: data/raw/external_data/코스피_지수_20261008162112.csv   # 월말 지수 2000-02~2021-12
+    kospi_index_csv: data/raw/external_data/코스피_지수_*.csv   # KOSIS 코스피 지수(DT_343_2010_S0033) 월말, 이름(받은 시각)이 가장 늦은 파일. 2026-11-26 받은 파일 2000-02~2025-12
     # DataGuide 파일(손익·현금흐름, 업종, 수정주가수익률 S410007900)은 이름이 아니라 항목 코드로 찾는다(src/preprocessing/dataguide_files, 2026-11-26).
     flows_xlsx:   # DataGuide 연간 손익·현금흐름(분기 누적의 결산 행). (기준, 재무제표) → 파일, {항목 코드: 개념}
       KGAAP_cons: {items: {'4000960002': ni_owner, '4000950000': op_income, '4000940000': sales, '4000945000': cogs, '4000961000': cfo}}
@@ -267,6 +277,30 @@ BASE_FEATURES:
         sets: [base, base+h1+h3+h2+h4, base+h1+h3+h4]          # 기본 세트·주 세트·H2 없는 주 세트(2026-11-26)
         interaction_sets: [base+h1+h3+h2+h4, base+h1+h3+h4]    # 상호작용은 주 세트 2개만, 세 모델 모두(LGB는 shap 패키지)
         rows: outer_validation                  # 각 Fold 모델로 그 Fold 바깥 검증 행(2006~2021 이어 붙임)
+# 기간 끝·저장 위치(7-4 ③④, 2026-11-26 사용자 결정). src/periods.py가 읽는다.
+# 개발: development_end까지, 표는 PATHS 경로(data/interim·processed). 학습·검증·튜닝은 이 표만 읽는다.
+# 최종(--final): 교수님 CSV 전체(테스트·2026 포함). 기간 끝 = 교수님 CSV 마지막 달(자료에서 자동), 표는 final_dir에 같은 파일 이름.
+DATA_PERIOD:
+  development_end: '2021-12'
+  final_dir: data/final/
+  # 최종 표의 2000~2021 부분이 개발 표와 값이 달라도 되는 알려진 행(7-4 ⑦ 과거 값 자동 확인의 예외, 2026-11-27 사용자 결정 (가)).
+  # 기준월 2021-11 자기자본: 개발 DataGuide 파일에 2021-09 분기가 빠져 2021-06 값을 썼고, 테스트 봉인 파일에는 있어 최종 표는 2021-09 값.
+  # 접수 2021-11-15(4종목)·11-29(950210) ≤ 11월 마지막 거래일, 값 = DART 원래 분기보고서 금액(원 단위 반올림) → 누수 아님.
+  # 따라 바뀌는 열: asof(equity 등), h1_components.bm, h1(z_bm·h1, 같은 달 표준화), base_features.rmw.
+  # 적격성 NA → False(2023~2025 첫 상장 42종목, 새 상장 목록)도 값 차이지만 학습 행에 영향 없음(수익률·시가총액 없음).
+  # src/final_build.py가 이 목록만 허용한다. tables: 표 이름 → 허용 열(all = 모든 열). base_month·stocks가 없으면 모든 행.
+  known_history_changes:
+  - name: eligibility_unknown_to_false     # 값이 비어 있던 칸이 False로 바뀐 경우만(True↔False 뒤집힘은 허용 안 함)
+    only: missing_to_false
+    tables: {panel: [eligible], eligibility: [eligible], h1_components: [eligible], mom: [eligible], h1: [eligible], h3: [eligible], base_features: [eligible]}
+  - name: asof_2021_09_quarter
+    base_month: '2021-11'
+    stocks: ['001080', '021820', '033250', '093240', '950210']
+    tables: {asof: all, h1_components: [bm], base_features: [rmw]}
+  - name: h1_restandardized_2021_11        # 같은 달 B/M 4개가 바뀌어 그 달 표준화(z_bm·h1)가 함께 움직임
+    base_month: '2021-11'
+    tables: {h1: [z_bm, h1]}
+    verify: h1_from_patched_components     # 허용 행의 B/M만 바꿔 다시 계산한 H1과 같을 때만 통과
 PERIODS:
   warmup:
   - 2000

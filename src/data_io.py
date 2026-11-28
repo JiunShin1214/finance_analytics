@@ -11,7 +11,7 @@ import pandas as pd
 from pandas import DataFrame
 
 from src.contracts import (
-    Config, DEVELOPMENT_MONTHS, NUMERIC_PANEL_UNITS, WIDE_PANEL_COLUMNS,
+    Config, DEVELOPMENT_MONTHS, NUMERIC_PANEL_UNITS, PROVIDED_MONTHS, WIDE_PANEL_COLUMNS,
     WIDE_VARIABLE_COLUMNS,
 )
 from src.preprocessing.panel import (
@@ -19,13 +19,18 @@ from src.preprocessing.panel import (
 )
 
 
-def _approved_sources(root: Path, config: Config, periods: Sequence[str]) -> list[tuple[str, str, Path]]:
-    """전체 요청을 preflight한다. 내용 open 없이 기간·명시 경로·링크 우회를 검사한다."""
+def _approved_sources(root: Path, config: Config, periods: Sequence[str], *,
+                      final: bool = False) -> list[tuple[str, str, Path]]:
+    """전체 요청을 preflight한다. 내용 open 없이 기간·명시 경로·링크 우회를 검사한다.
+
+    final=False(기본)면 개발 묶음만 허용한다. final=True(최종 표, src.periods)일 때만 테스트 묶음을 연다."""
+    allowed = PROVIDED_MONTHS if final else DEVELOPMENT_MONTHS
     if (not periods or len(set(periods)) != len(periods)
-            or any(p not in DEVELOPMENT_MONTHS for p in periods)):
+            or any(p not in allowed for p in periods)):
         raise PermissionError("only warmup_2000 and train_2001_2021 are allowed")
     manifest = config.get("PATHS", {}).get("wide_csv", {})
-    if not isinstance(manifest, Mapping) or set(manifest) != set(DEVELOPMENT_MONTHS):
+    if (not isinstance(manifest, Mapping) or not set(DEVELOPMENT_MONTHS) <= set(manifest)
+            or not set(manifest) <= set(PROVIDED_MONTHS)):
         raise PermissionError("unverified development input manifest")
     root = root.resolve()
     if not root.is_dir():
@@ -65,7 +70,7 @@ def _read_wide_csv(source: Path, period: str, variable: str) -> tuple[DataFrame,
     months = list(normalize_month([row[0] for row in rows]))
     if len(set(months)) != len(months):
         raise ValueError(f"{source.name}: duplicate months")
-    start, end = DEVELOPMENT_MONTHS[period]
+    start, end = PROVIDED_MONTHS[period]
     expected = pd.period_range(start, end, freq="M").astype(str).tolist()
     if months != expected:
         raise ValueError(f"{source.name}: missing, unordered or out-of-scope months")
@@ -100,15 +105,15 @@ def _read_wide_csv(source: Path, period: str, variable: str) -> tuple[DataFrame,
 
 def load_panel_contract(
     path: Path, *, column_mapping: Mapping[str, str | None], config: Config,
-    periods: Sequence[str] = tuple(DEVELOPMENT_MONTHS),
+    periods: Sequence[str] = tuple(DEVELOPMENT_MONTHS), final: bool = False,
 ) -> DataFrame:
     """프로젝트 루트 + 명시 wide manifest -> stock_id/month 관측 패널(메모리).
 
-    path는 CSV 한 개가 아닌 프로젝트 루트다. periods는 개발기간만 허용한다.
+    path는 CSV 한 개가 아닌 프로젝트 루트다. periods는 개발기간만 허용한다(final=True면 테스트 묶음도, 최종 표 전용).
     모든 요청 경로를 첫 파일 open 전에 검사한다. 목표/특징/표본은 만들지 않는다.
     eligible는 원천 부재로 미확인 결측이며 추론/학습 적격성을 인증하지 않는다.
     """
-    sources = _approved_sources(Path(path), config, periods)
+    sources = _approved_sources(Path(path), config, periods, final=final)
     expected_mapping = {field: variable for variable, field in WIDE_VARIABLE_COLUMNS.items()}
     expected_mapping.update(stock_id="stock_id", month="month", eligible=None)
     if dict(column_mapping) != expected_mapping:
@@ -140,7 +145,8 @@ def load_panel_contract(
         observed["eligible"] = pd.Series(pd.NA, index=observed.index, dtype="boolean")
         panels.append(observed.loc[:, WIDE_PANEL_COLUMNS])
     result = pd.concat(panels, ignore_index=True)
-    validate_input_schema(result, contract_name="panel", config=config)
+    last = max(PROVIDED_MONTHS[p][1] for p in periods) if final else DEVELOPMENT_MONTHS["train_2001_2021"][1]
+    validate_input_schema(result, contract_name="panel", config=config, last_month=last)
     result.attrs.update(input_audit=audits, units=dict(NUMERIC_PANEL_UNITS),
                         stock_columns=tuple(reference_stocks), eligibility_status="unverified")
     return result
@@ -162,7 +168,8 @@ def normalize_columns_contract(table: DataFrame, *, column_mapping: Mapping[str,
     return result
 
 
-def validate_input_schema(table: DataFrame, *, contract_name: str, config: Config) -> None:
+def validate_input_schema(table: DataFrame, *, contract_name: str, config: Config,
+                          last_month: str = DEVELOPMENT_MONTHS["train_2001_2021"][1]) -> None:
     """현재는 개발용 관측 panel만 검증. 다른 입력/PIT 계약은 미구현이다."""
     if contract_name != "panel":
         raise NotImplementedError("only the development panel schema is implemented")
@@ -171,7 +178,7 @@ def validate_input_schema(table: DataFrame, *, contract_name: str, config: Confi
     enforce_unique_stock_month(table, month_column="month")
     normalize_stock_id(table["stock_id"].tolist())
     months = normalize_month(table["month"].tolist())
-    if any(not "2000-01" <= month <= "2021-12" for month in months):
+    if any(not "2000-01" <= month <= last_month for month in months):
         raise ValueError("panel contains non-development months")
     for field, unit in NUMERIC_PANEL_UNITS.items():
         if config.get("UNITS", {}).get(field) != unit:

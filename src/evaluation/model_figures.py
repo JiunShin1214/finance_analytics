@@ -175,3 +175,41 @@ def make_figures(loaded: dict, out_dir, *, fold: int = 16) -> list[str]:
         if model in set(best.model):
             paths.append(depth_chart(loaded, model, out))
     return [str(p) for p in paths]
+
+
+def tuning_trees_chart(summary_csv, model: str, out_dir, *, l2: int = 0, yearly_ranges: dict | None = None) -> Path:
+    """튜닝 요약 표(tune_*_summary.csv)에서 한 모델의 트리 수(고정 500~2000)별 바깥 검증 IC, 깊이 3·4 두 선.
+    해마다 선택은 Fold마다 트리 수가 달라 x 위치 없는 가로 점선(2026-11-23 발표). yearly_ranges = {깊이: (최소, 최대)} 고른 트리 수."""
+    t = pd.read_csv(summary_csv)
+    t = t[t['모델'].eq(model) & t['L2'].eq(l2)]
+    colors = {3: TRAIN, 4: VALID}
+    fig, ax = plt.subplots(figsize=(7.5, 4.6))
+    for d, g in t.groupby('깊이'):
+        fixed = g[g['트리'].str.endswith('고정')].assign(n=lambda f: f['트리'].str.split().str[0].astype(int)).sort_values('n')
+        ax.plot(fixed.n, fixed['평균 IC'], color=colors[d], marker='o', markersize=8, markeredgecolor=SURFACE,
+                markeredgewidth=2, label=f'깊이 {d} (트리 고정)')
+        y = g[g['트리'].eq('해마다')].iloc[0]
+        rng = (yearly_ranges or {}).get(d)
+        span = f', 고른 트리 {rng[0]:,}~{rng[1]:,}개' if rng else ''
+        ax.hlines(y['평균 IC'], 250, 2000, color=colors[d], linewidth=1.5, linestyle=(0, (4, 3)),
+                  label=f'깊이 {d} (해마다 선택{span})')
+        ax.annotate(f"해마다 선택 {y['평균 IC']:.4f}", xy=(2000, y['평균 IC']), xytext=(8, 0), textcoords='offset points',
+                    fontsize=8.5, color=INK2, va='center')
+        ax.annotate(f'깊이 {d}', xy=(fixed.n.iloc[-1], fixed['평균 IC'].iloc[-1]), xytext=(8, 0), textcoords='offset points',
+                    fontsize=9, color=INK2, va='center')
+    best = t[t['트리'].str.endswith('고정')].loc[lambda f: f['평균 IC'].idxmax()]
+    ax.annotate(f"최고: 깊이 {best['깊이']}, {best['트리']} {best['평균 IC']:.4f}", xy=(int(best['트리'].split()[0]), best['평균 IC']),
+                xytext=(8, 8), textcoords='offset points', fontsize=9, color=INK2, va='bottom')
+    lo, hi = ax.get_ylim()
+    ax.set_ylim(lo, hi + (hi - lo) * 0.08)
+    ax.set_xticks([500, 1000, 1500, 2000])
+    ax.set_xlim(250, 2400)
+    ax.set_title(f'{MODEL_LABELS[model]}: 트리 수·깊이별 검증 IC')
+    ax.set_xlabel('트리 수')
+    ax.set_ylabel('월별 순위 IC 평균 (192개월)')
+    ax.legend(loc='lower left', fontsize=8.5)
+    fig.tight_layout()
+    path = Path(out_dir) / f'tuning_trees_depth_{model}.png'
+    fig.savefig(path, dpi=160)
+    plt.close(fig)
+    return path

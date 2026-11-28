@@ -66,6 +66,16 @@ class EligibilityTests(unittest.TestCase):
         without = monthly_eligibility(iv, months, self.ltd).set_index(["stock_id", "base_month"])
         self.assertFalse(without.eligible[("000010", "2001-01")])
 
+    def test_no_event_stock_eligible_only_in_traded_months(self):
+        # 2026-11-28: 목록에 없는 종목은 그 달 말 KOSPI 거래가 있는 달만(나중 거래로 과거 달을 판정하지 않음)
+        iv = listing_intervals(self.listing, self.delisting, self.stocks, kospi_observed={"000050"})
+        months = ["2001-01", "2001-02", "2001-03"]
+        e = monthly_eligibility(iv, months, self.ltd, {("000050", "2001-03")}).set_index(["stock_id", "base_month"])
+        self.assertFalse(e.eligible[("000050", "2001-01")])
+        self.assertTrue(e.eligibility_basis[("000050", "2001-01")].endswith(":not_traded_month_end"))
+        self.assertTrue(e.eligible[("000050", "2001-03")])
+        self.assertTrue(pd.isna(e.eligible[("000060", "2001-03")]))   # 관측 없음은 그대로 판정 불가
+
     def test_conflicting_listing_dates_stop(self):
         self.delisting.loc[0, "상장일"] = "2001/01/06"
         with self.assertRaises(ValueError):

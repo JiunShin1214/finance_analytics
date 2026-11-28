@@ -36,6 +36,8 @@ DEVELOPMENT_MONTHS = {
     "warmup_2000": ("2000-01", "2000-12"),
     "train_2001_2021": ("2001-01", "2021-12"),
 }
+# 최종 표(src.periods final=True)에서만 읽는 묶음. 개발 표·학습은 DEVELOPMENT_MONTHS만.
+PROVIDED_MONTHS = {**DEVELOPMENT_MONTHS, "test_2022_2025": ("2022-01", "2025-12")}
 PANEL_COLUMNS = ("stock_id", "month", "return", "market_cap", "eligible")
 # eligible는 원자료에서 확인 불가: nullable boolean 결측, 적격성 인증 아님.
 WIDE_PANEL_COLUMNS = (*PANEL_COLUMNS, "price", "shares_outstanding", "company_name", "isin")

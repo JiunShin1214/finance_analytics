@@ -23,10 +23,7 @@ from src.preprocessing.dart_extract import (
 OUTPUT = Path("outputs/run_id/DATAGUIDE_EQUITY")
 
 
-PANEL_NAMES = (Path("data/raw/warmup_2000__company_name.csv"), Path("data/raw/train_2001_2021__company_name.csv"))
-
-
-MARCAP = Path("data/raw/marcap")
+# 교수님 CSV 종목·marcap 경로는 src.periods가 기간에 맞춰 정한다(panel_csv, marcap_paths).
 
 
 OVERRIDES = Path("config/dataguide_overrides.json")
@@ -494,8 +491,22 @@ def usable_month(receipt: str | None, last_days: pd.Series) -> str | None:
     return (month + int(late)).strftime("%Y-%m")
 
 
+def data_period(root: Path, final: bool):
+    """src.periods 기간(개발 2021-12 / 최종 = 교수님 CSV 마지막 달)."""
+    import yaml
+    from src import periods
+    config = yaml.safe_load((Path(root) / "config/experiment.yaml").read_text(encoding="utf-8"))
+    return config, periods.resolve(config, root, final=final)
+
+
+def marcap_dates(root: Path, period) -> pd.Series:
+    from src import periods
+    return pd.concat(pd.read_parquet(Path(root) / p, columns=["Date"]).Date for p in periods.marcap_paths(root, period))
+
+
 def build(root: Path, raw: Path = RAW, *, include_test: bool = False) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
-    """include_test: test_sealed 폴더의 DataGuide 파일도 쓴다(모델 고정 뒤 테스트 입력을 만들 때만).
+    """include_test: 최종 표(src.periods final). test_sealed 폴더의 DataGuide 파일, 자료 끝 연도까지의 marcap,
+    테스트 묶음 교수님 CSV 종목도 쓴다. 기본은 개발 기간(2021년까지).
     파일은 이름이 아니라 항목 코드로 찾는다(dataguide_files, 2026-11-26). 종류마다 파일이 여럿이면 합친다."""
     from src.preprocessing import dataguide_files
     frames, inputs = {}, {}
@@ -541,11 +552,12 @@ def build(root: Path, raw: Path = RAW, *, include_test: bool = False) -> tuple[p
                    & ~panel.dart_compare.isin(["same", "tier_only"]) & panel.rcept_no.notna())
     panel["exclude_reason"] = None
     panel.loc[unconfirmed, "exclude_reason"] = "identity_failed_unconfirmed"
-    dates = pd.concat(pd.read_parquet(p, columns=["Date"]).Date for p in [root / MARCAP / f"marcap-{year}.parquet" for year in range(2000,2022)])
-    last_days = last_trading_days(dates)
+    from src import periods
+    config, period = data_period(root, include_test)
+    last_days = last_trading_days(marcap_dates(root, period))
     panel["available_month"] = [usable_month(r, last_days) for r in panel.rcept_dt]
     codes = set()
-    for p in PANEL_NAMES:
+    for p in periods.panel_csv(config, period, "company_name"):
         with (root / p).open(encoding="utf-8-sig", newline="") as stream:
             codes |= set(next(csv.reader(stream))[1:])
     panel["panel"] = panel.stock_code.isin(codes)

@@ -37,6 +37,9 @@ FOLLOWUP_DEPTHS = {'xgb_pairwise': (4,), 'xgb_rankreg': (4,), 'lgb_rankreg': (4,
 LEARNING_RATES = (0.01,)            # 2026-11-14 결정: 0.01만(config 주석)
 MAX_TREES = 1000
 MIN_HESSIAN = 0.001
+# 빈 입력(NaN) 허용(2026-11-28, 결측 채움 비교 ②용, 기본 False). True면 NaN을 라이브러리 기본 결측 처리(나눌 때마다
+# 빈 값을 보낼 쪽을 학습)에 맡긴다. 무한대는 여전히 거부. 모듈 전역이라 workers=1에서만 쓴다.
+ALLOW_MISSING_INPUT = False
 MIN_DATA_IN_LEAF = 1
 MAX_BIN = 256
 H3_SPANS = (12, 36, 60)      # 부스팅의 H3 λ 후보(span 개월), 2026-11-14 결정: 원전 기간 1·3·5년만
@@ -55,6 +58,11 @@ KINDS = {
     'lgb_rankreg':    {'library': 'lightgbm', 'task': 'regression', 'targets': ('percentile',), 'losses': ('mse',)},
 }
 
+
+
+def _inputs_ok(X: np.ndarray) -> bool:
+    """입력 검사: 기본은 모두 유한, ALLOW_MISSING_INPUT이면 NaN은 허용하고 무한대만 거부."""
+    return bool(not np.isinf(X).any()) if ALLOW_MISSING_INPUT else bool(np.isfinite(X).all())
 
 def settings(kind: str, followup: bool = False) -> list[tuple]:
     """한 종류의 설정 목록 (kind, target, loss, depth, learning_rate). 회귀 12개, 순위 3개.
@@ -161,10 +169,10 @@ def fit_boosting(kind: str, X, y, months, *, target: str, loss: str, depth: int,
     _check_setting(kind, loss, delta)
     X = np.asarray(X, dtype=float)
     y = _check_label(kind, np.asarray(y, dtype=float).reshape(-1))
-    if X.ndim != 2 or len(X) != len(y) or not len(y) or not (np.isfinite(X).all() and np.isfinite(y).all()):
+    if X.ndim != 2 or len(X) != len(y) or not len(y) or not (_inputs_ok(X) and np.isfinite(y).all()):
         raise ValueError('boosting_input_invalid')
     inner_X = np.asarray(inner_X, dtype=float)
-    if inner_X.ndim != 2 or inner_X.shape[1] != X.shape[1] or not np.isfinite(inner_X).all():
+    if inner_X.ndim != 2 or inner_X.shape[1] != X.shape[1] or not _inputs_ok(inner_X):
         raise ValueError('boosting_inner_input_invalid')
     if MAX_TREES % train_every:
         raise ValueError('train_every_must_divide_max_trees')
@@ -239,7 +247,7 @@ def fit_boosting(kind: str, X, y, months, *, target: str, loss: str, depth: int,
 def predict_boosting(fitted: Mapping, X, n_trees: int | None = None) -> np.ndarray:
     """첫 n_trees(기본: 고른 트리 수)개 트리로 예측."""
     X = np.asarray(X, dtype=float)
-    if X.ndim != 2 or not np.isfinite(X).all():
+    if X.ndim != 2 or not _inputs_ok(X):
         raise ValueError('boosting_predict_input')
     n = int(fitted['best_trees'] if n_trees is None else n_trees)
     if not 1 <= n <= MAX_TREES:

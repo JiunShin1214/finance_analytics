@@ -9,11 +9,14 @@ from src.contracts import FEATURE_KEY, H1_COLUMNS
 from src.preprocessing.panel import enforce_unique_stock_month, normalize_month, normalize_stock_id
 
 
-def _keys(frame: DataFrame, month: str) -> None:
+DEV_LAST_MONTH = '2021-12'   # 개발 자료 끝. 최종 표(src.periods final)는 last_month로 자료 끝을 넘긴다
+
+
+def _keys(frame: DataFrame, month: str, last_month: str = DEV_LAST_MONTH) -> None:
     enforce_unique_stock_month(frame, month_column=month)
     normalize_stock_id(frame.stock_id.tolist())
     normalize_month(frame[month].tolist())
-    if not frame[month].between('2000-01', '2021-12').all():
+    if not frame[month].between('2000-01', last_month).all():
         raise ValueError('development_period_only')
 
 
@@ -28,14 +31,14 @@ def _unit(frame: DataFrame, column: str, unit: str) -> None:
         raise ValueError(f'{column}: unit must be {unit}')
 
 
-def calculate_momentum_11m(returns: DataFrame, base_keys: DataFrame) -> DataFrame:
+def calculate_momentum_11m(returns: DataFrame, base_keys: DataFrame, *, last_month: str = DEV_LAST_MONTH) -> DataFrame:
     """정확한 달력 t-11~t-1 복리. 누락·범위 밖·비유한 수익률을 채우지 않는다.
 
     입력 오류값은 그 창만 격리한다. -100%는 유효하며 곱이 0인 Mom=-1이다.
     mom_valid_months는 창 안의 실제 유효 달 수(자료 시작 전 달은 0개로 센다).
     """
-    _keys(returns, 'month')
-    _keys(base_keys, 'base_month')
+    _keys(returns, 'month', last_month)
+    _keys(base_keys, 'base_month', last_month)
     _unit(returns, 'return', 'decimal')
     r = _numeric(returns['return'], 'return')
     invalid = r.notna() & (~np.isfinite(r) | r.lt(-1))
@@ -65,13 +68,13 @@ def calculate_momentum_11m(returns: DataFrame, base_keys: DataFrame) -> DataFram
     return out
 
 
-def calculate_size_bm(panel: DataFrame, equity_asof: DataFrame) -> DataFrame:
+def calculate_size_bm(panel: DataFrame, equity_asof: DataFrame, *, last_month: str = DEV_LAST_MONTH) -> DataFrame:
     """기존 as-of의 usable을 적용하고 공개 전·만료 후 사용은 중단한다."""
-    _keys(panel, 'month')
+    _keys(panel, 'month', last_month)
     _unit(panel, 'market_cap', 'KRW')
     _unit(equity_asof, 'equity', 'KRW')
     a = equity_asof.rename(columns={'stock_code': 'stock_id'}).copy()
-    _keys(a, 'base_month')
+    _keys(a, 'base_month', last_month)
     usable = a.usable.eq(True).fillna(False)
     for column in ('available_month', 'expiry_date'):
         if column not in a:
@@ -101,11 +104,12 @@ def calculate_size_bm(panel: DataFrame, equity_asof: DataFrame) -> DataFrame:
     return f.drop(columns=['market_cap', 'equity', 'usable', 'reason'])
 
 
-def cross_sectional_zscore(common_valid: DataFrame, *, columns: Sequence[str], ddof: int = 1) -> DataFrame:
+def cross_sectional_zscore(common_valid: DataFrame, *, columns: Sequence[str], ddof: int = 1,
+                           last_month: str = DEV_LAST_MONTH) -> DataFrame:
     """당월 적격·공통 유효 집합의 표본표준편차로 계산. y는 참조하지 않는다."""
     if ddof != 1 or tuple(columns) != ('size', 'bm', 'mom'):
         raise ValueError('H1 requires size/bm/mom and ddof=1')
-    _keys(common_valid, 'base_month')
+    _keys(common_valid, 'base_month', last_month)
     f = common_valid
     for c in columns:
         _numeric(f[c], c)
@@ -132,26 +136,27 @@ def cross_sectional_zscore(common_valid: DataFrame, *, columns: Sequence[str], d
     return out
 
 
-def calculate_h1_score(components: DataFrame) -> DataFrame:
+def calculate_h1_score(components: DataFrame, *, last_month: str = DEV_LAST_MONTH) -> DataFrame:
     """[-Z(Size)+Z(B/M)+Z(Mom)]/3. 표준화 뒤까지 목표를 결합하지 않는다."""
-    out = cross_sectional_zscore(components, columns=('size', 'bm', 'mom'))
+    out = cross_sectional_zscore(components, columns=('size', 'bm', 'mom'), last_month=last_month)
     out['h1'] = (-out.z_size + out.z_bm + out.z_mom) / 3
     out['h1_available'] = out.h1_exclusion_reason.eq('')
     return out[list(H1_COLUMNS)]
 
 
-def validate_h1_contract(features: DataFrame, components: DataFrame, provenance: DataFrame) -> None:
+def validate_h1_contract(features: DataFrame, components: DataFrame, provenance: DataFrame, *,
+                         last_month: str = DEV_LAST_MONTH) -> None:
     """월별 독립 재계산으로 집합·수식·상태를 검사한다.
 
     provenance는 사용한 as-of 표. 모멘텀 창은 단위 시험과
     파이프라인의 원수익률 독립 곱셈으로 검산한다.
     """
-    _keys(features, 'base_month')
-    _keys(components, 'base_month')
+    _keys(features, 'base_month', last_month)
+    _keys(components, 'base_month', last_month)
     if tuple(features.columns) != H1_COLUMNS:
         raise ValueError('h1_columns_mismatch')
     a = provenance.rename(columns={'stock_code': 'stock_id'})
-    _keys(a, 'base_month')
+    _keys(a, 'base_month', last_month)
     usable = a.usable.eq(True).fillna(False)
     if (a.loc[usable, 'available_month'].isna().any()
             or a.loc[usable, 'available_month'].gt(a.loc[usable, 'base_month']).any()

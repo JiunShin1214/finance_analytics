@@ -466,6 +466,8 @@ def choose(results: list[dict]) -> tuple[dict, int]:
 
 def _design(data: pd.DataFrame, columns: list[str], rows: np.ndarray, *, fill: bool) -> np.ndarray:
     X = data[columns].to_numpy(float)[rows]
+    if boosting.ALLOW_MISSING_INPUT:      # 결측 채움 비교 ②(2026-11-28): 빈 값을 채우지 않고 부스팅에 그대로
+        return X
     if fill:
         X = np.where(np.isfinite(X), X, 0.0)
     elif not np.isfinite(X).all():

@@ -2,8 +2,10 @@
 
 적격성: 그 달 마지막 거래일에 KOSPI 주권(국내·외국)의 보통주로 상장되어 있으면(상장일 <= 그날 < 폐지일) 적격.
 - 폐지 목록에 있으면 그 행의 상장일·폐지일. 상장 목록에도 있으면 두 상장일이 같아야 한다.
-- 상장 목록에만 있으면 상장일부터 계속 상장(그 행의 폐지일이 2021년 이후면 기간 밖).
-- 두 목록에 없고 marcap에서 KOSPI로 관측되면 2000년 전부터 2021년 말까지 상장 유지로 본다.
+- 상장 목록에만 있으면 상장일부터 계속 상장(그 행의 폐지일이 자료 끝 이후면 기간 밖).
+- 두 목록에 없고 marcap에서 KOSPI로 관측되면, 그 달 마지막 거래일에 marcap KOSPI 거래가 있는 달만 적격(2026-11-28 수정).
+  이전 규칙(관측되면 2000년~자료 끝 전체 상장)은 과거 달을 나중 거래 기록으로 판정해 미래 정보를 썼다
+  (잘라내기 시험 2015-12: 950210은 2021년 첫 거래로 2000년부터 적격이 됨).
 - 두 목록에 없고 KOSPI 관측도 없으면 판정 불가(NA).
 비결측 수익률이나 제공 1,086종목이라는 사실로 적격성을 추정하지 않는다.
 
@@ -18,7 +20,7 @@ import pandas as pd
 LISTING_DIR = Path("data/raw/상장")
 DELISTING_DIR = Path("data/raw/상장폐지")
 SECURITY_KINDS = ("주권", "외국주권")
-PERIOD_END = pd.Timestamp("2021-12-31")
+PERIOD_END = pd.Timestamp("2021-12-31")   # 개발 기본값. 최종 표는 src.periods.Period.end_day를 넘긴다
 
 
 def _day(value) -> pd.Timestamp | None:
@@ -47,7 +49,8 @@ def read_events(root: Path) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     return listing, delisting, info
 
 
-def listing_intervals(listing: pd.DataFrame, delisting: pd.DataFrame, stocks, kospi_observed: set[str]) -> pd.DataFrame:
+def listing_intervals(listing: pd.DataFrame, delisting: pd.DataFrame, stocks, kospi_observed: set[str], *,
+                      period_end: pd.Timestamp = PERIOD_END) -> pd.DataFrame:
     """종목별 상장 구간(start/end; None은 기간 밖), 판정 근거, KOSPI 이전상장일."""
     for name, table in (("listing", listing), ("delisting", delisting)):
         dup = table["종목코드"][table["종목코드"].duplicated()]
@@ -66,7 +69,7 @@ def listing_intervals(listing: pd.DataFrame, delisting: pd.DataFrame, stocks, ko
             basis = "listing_and_delisting_lists" if in_l else "delisting_list"
         elif in_l:
             start, later = _day(lst.at[stock, "상장일"]), _day(lst.at[stock, "상장폐지일"])
-            if later is not None and later <= PERIOD_END:
+            if later is not None and later <= period_end:
                 raise ValueError(f"delisting_missing_from_delisting_list:{stock}")
             basis = "listing_list"
         elif stock in kospi_observed:
@@ -101,9 +104,14 @@ def monthly_eligibility(intervals: pd.DataFrame, months, last_trading_day: dict[
     stocks = np.repeat(iv.stock_id.to_numpy(object), n_m)
     month_col = np.tile(np.array(months, dtype=object), len(iv))
     if kospi_month_end:
-        prior = (state == "before_listing") & np.array([(st, m) in kospi_month_end for st, m in zip(stocks, month_col)])
+        traded = np.array([(st, m) in kospi_month_end for st, m in zip(stocks, month_col)])
+        prior = (state == "before_listing") & traded
         listed = listed | prior
         state = np.where(prior, "prior_listing_kospi_observed", state)
+        # 목록에 없는 종목: 그 달 말 KOSPI 거래가 있는 달만(그 달에 알 수 있는 정보만, 2026-11-28)
+        no_event = basis == "no_event_kospi_observed"
+        listed = np.where(no_event, traded, listed)
+        state = np.where(no_event, np.where(traded, "listed", "not_traded_month_end"), state)
     out = pd.DataFrame({"stock_id": stocks, "base_month": month_col,
                         "eligible": pd.array(np.where(known, listed, False), dtype="boolean"),
                         "eligibility_basis": [b if not st else f"{b}:{st}" for b, st in zip(basis, state)],

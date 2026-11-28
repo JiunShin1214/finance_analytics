@@ -28,7 +28,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.preprocessing.equity_dating import (
-    MARCAP, OVERRIDES, PANEL_NAMES, last_trading_days, load_overrides, build as build_dated_equity)
+    OVERRIDES, data_period, last_trading_days, load_overrides, marcap_dates, build as build_dated_equity)
 from src.preprocessing.dataguide_extract import (
     sha256, statement_month)
 from src.preprocessing.dart_extract import (
@@ -42,10 +42,7 @@ OUTPUT = Path("outputs/run_id/EQUITY_ASOF")
 INTERIM = Path("data/interim/asof.parquet")
 
 
-MONTHS = ("2000-01", "2021-11")
-
-
-MARKET_CAP = (Path("data/raw/warmup_2000__raw_month_end_market_cap.csv"), Path("data/raw/train_2001_2021__raw_month_end_market_cap.csv"))
+MONTHS = ("2000-01", "2021-11")   # 개발 기준월 범위. 최종(--final)은 src.periods(교수님 CSV 마지막 달의 전달까지)
 
 
 DART_SOURCES = {"dart_first_before_correction", "dart_first_differs", "dart_correction"}
@@ -163,21 +160,27 @@ def dart_fill(root: Path, decisions: pd.DataFrame, need: pd.DataFrame, corp_of: 
     return table[table.usable.fillna(False)]
 
 
-def build(root: Path) -> tuple[pd.DataFrame, dict]:
-    panel, versions, _, dating_meta = build_dated_equity(root)
+def build(root: Path, *, final: bool = False, dated=None) -> tuple[pd.DataFrame, dict]:
+    """final=True: 최종 표(전체 기간, src.periods). 기본은 개발 기준월 MONTHS.
+    dated: 이미 만든 equity_dating.build(root, include_test=final) 결과(실행 파일이 시점 붙이기를 한 번만 하려고 넘김)."""
+    from src import periods
+    config, period = data_period(root, final)
+    months_range = (MONTHS[0], period.last_base_month)
+    if not final and months_range != MONTHS:
+        raise ValueError("development_months_mismatch")
+    panel, versions, _, dating_meta = dated if dated is not None else build_dated_equity(root, include_test=final)
     panel = panel[panel.panel]
     decisions, dart_counts = dart_decisions(root)
     versions, version_counts = checked_versions(versions, decisions, panel)
     stocks = []
-    for p in PANEL_NAMES:
+    for p in periods.panel_csv(config, period, "company_name"):
         with (root / p).open(encoding="utf-8-sig", newline="") as stream:
             stocks += [c for c in next(csv.reader(stream))[1:] if c not in stocks]
-    months = pd.period_range(*MONTHS, freq="M").astype(str).tolist()
-    dates = pd.concat(pd.read_parquet(p, columns=["Date"]).Date for p in [root / MARCAP / f"marcap-{year}.parquet" for year in range(2000,2022)])
-    last_days = last_trading_days(dates)
+    months = pd.period_range(*months_range, freq="M").astype(str).tolist()
+    last_days = last_trading_days(marcap_dates(root, period))
     table = build_asof(versions, stocks, months, last_days)
     caps = []
-    for p in MARKET_CAP:
+    for p in periods.panel_csv(config, period, "raw_month_end_market_cap"):
         wide = pd.read_csv(root / p, dtype=str, encoding="utf-8-sig")
         wide = wide.set_index(wide.columns[0]).apply(pd.to_numeric, errors="coerce")
         wide.index = pd.to_datetime(wide.index).to_period("M").astype(str)
@@ -206,6 +209,7 @@ def build(root: Path) -> tuple[pd.DataFrame, dict]:
     table = table.reindex(columns=COLUMNS)
     checks = run_checks(table, last_days)
     meta = summarize(root, table, versions, version_counts, dart_counts, checks)
+    meta["months"] = list(months_range)
     meta["dating"] = dating_meta
     return table, meta
 
@@ -252,13 +256,21 @@ def summarize(root: Path, table: pd.DataFrame, versions: pd.DataFrame, version_c
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--execute", action="store_true", help="Write outputs/run_id/EQUITY_ASOF/<stamp>/ and data/interim/asof.parquet")
+    parser.add_argument("--final", action="store_true", help="전체 기간(src.periods) 최종 표 -> DATA_PERIOD.final_dir/asof.parquet만 쓴다")
     args = parser.parse_args()
     root = Path.cwd().resolve()
-    table, meta = build(root)
+    table, meta = build(root, final=args.final)
     print(json.dumps({k: v for k, v in meta.items() if k not in ("rules", "by_year", "inputs_sha256")}, ensure_ascii=False, indent=2))
     print(pd.DataFrame(meta["by_year"]).to_string(index=False))
     if not args.execute:
         print("DRY-RUN: nothing written.")
+        return
+    if args.final:
+        from src import periods
+        target = root / periods.table_path(data_period(root, True)[0], "asof", final=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        table.to_parquet(target, index=False)
+        print("saved:", target.relative_to(root).as_posix())
         return
     out = root / OUTPUT / datetime.now().strftime("%Y%m%dT%H%M%S")
     out.mkdir(parents=True)

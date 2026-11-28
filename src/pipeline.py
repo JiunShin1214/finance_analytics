@@ -9,6 +9,7 @@ import yaml
 from src.contracts import Config
 
 # observe는 ingest 표와 collect(as-of)를 읽는 가용성 점검 단계라 그 둘 뒤, features 앞에 둔다.
+FINAL_STAGES = ("ingest", "features", "base-features")   # --final(전체 기간 표)을 받는 단계. 분석·검정 단계는 개발 표만
 STAGES = ("ingest", "collect", "observe", "features", "h1-test", "h1-pca-variance", "h1-pca-structure", "h1-pca-ic", "h1-constrained-pca", "h1-hypothesis", "h1-mean-tests", "h3-test", "h3-hypothesis", "h3-overlap", "base-features", "validate", "final-test")
 
 
@@ -39,8 +40,11 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def plan_ingest(config: Config, *, root: Path = Path("."), execute: bool = False) -> dict:
+def plan_ingest(config: Config, *, root: Path = Path("."), execute: bool = False, final: bool = False) -> dict:
     """개발 원자료(2000-01~2021-12)를 정리해 interim 표 3개를 만든다.
+
+    final=True: 교수님 CSV 전체(테스트·2026 포함, src.periods)로 같은 표를 만들어 DATA_PERIOD.final_dir에 바로 저장한다
+    (실행 기록 폴더 없음). 개발 표(data/interim)는 건드리지 않는다.
 
     - panel: 제공 wide CSV 12개를 종목×월로 펼친 WIDE_PANEL_COLUMNS. 원본 읽기 계약(eligible 비어 있음)을
       검사한 뒤, eligible만 아래 적격성 판정 값으로 채운다. 다른 값은 바꾸지 않는다.
@@ -63,19 +67,22 @@ def plan_ingest(config: Config, *, root: Path = Path("."), execute: bool = False
         DELISTING_DIR, LISTING_DIR, kospi_month_end_observations, listing_intervals, monthly_eligibility, read_events)
 
     started = datetime.now()
-    panel = load_panel_contract(root, column_mapping=config["COLUMN_MAPPING"]["panel"], config=config)
+    from src import periods as period_rules
+    period = period_rules.resolve(config, root, final=final)
+    panel = load_panel_contract(root, column_mapping=config["COLUMN_MAPPING"]["panel"], config=config,
+                                periods=period.groups, final=final)
     stocks = list(panel.attrs["stock_columns"])
     months = sorted(panel.month.unique())
-    years = range(int(months[0][:4]), int(months[-1][:4]) + 1)
-    marcap_files = [Path(f"data/raw/marcap/marcap-{y}.parquet") for y in years]  # 개발 기간 파일만 연다
+    marcap_files = period_rules.marcap_paths(root, period)  # 자료 끝 연도까지만 연다
     marcap = pd.concat(pd.read_parquet(root / p, columns=["Code", "Market", "Date"]) for p in marcap_files)
+    marcap["Code"] = marcap.Code.astype(str).str.strip().str.zfill(6)   # 2000-01~05 파일은 앞 0이 빠져 있음(2026-11-28 수정)
     ltd = {str(k): pd.Timestamp(v) for k, v in last_trading_days(marcap.Date).items()}
     trading = pd.DataFrame({"month": months, "last_trading_day": [ltd[m].strftime("%Y-%m-%d") if m in ltd else None
                                                                     for m in months]})[list(TRADING_DAY_COLUMNS)]
 
     listing, delisting, event_info = read_events(root)
     kospi_codes = set(marcap.loc[marcap.Market.eq("KOSPI"), "Code"].astype(str))
-    intervals = listing_intervals(listing, delisting, stocks, kospi_codes)
+    intervals = listing_intervals(listing, delisting, stocks, kospi_codes, period_end=period.end_day)
     observed = kospi_month_end_observations(marcap, ltd)
     elig = monthly_eligibility(intervals, months, ltd, observed).rename(columns={"base_month": "month"})
     elig = elig[list(ELIGIBILITY_COLUMNS)]
@@ -105,10 +112,18 @@ def plan_ingest(config: Config, *, root: Path = Path("."), execute: bool = False
         "market_cap_unknown": int((mc & out.eligible.isna()).sum()),
         "basis_counts": elig.eligibility_basis.value_counts().to_dict(),
     }
-    result = {"checks": checks, "summary": summary, "events": event_info, "execute": execute}
+    result = {"checks": checks, "summary": summary, "events": event_info, "execute": execute, "final": final}
     if not all(checks.values()):
         raise ValueError("ingest_checks_failed:" + ",".join(k for k, v in checks.items() if not v))
     if not execute:
+        return result
+    if final:
+        tables = {"panel": out, "eligibility": elig, "trading_days": trading}
+        for name, table in tables.items():
+            target = root / period_rules.table_path(config, name, final=True)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            table.to_parquet(target, index=False)
+        result["written"] = [period_rules.table_path(config, n, final=True).as_posix() for n in tables]
         return result
 
     stamp = started.strftime("%Y%m%dT%H%M%S")
@@ -117,7 +132,7 @@ def plan_ingest(config: Config, *, root: Path = Path("."), execute: bool = False
     tables = {"panel": out, "eligibility": elig, "trading_days": trading}
     for name, table in tables.items():
         table.to_parquet(run_dir / f"{name}.parquet", index=False)
-    inputs = [Path(p) for files in config["PATHS"]["wide_csv"].values() for p in files.values()]
+    inputs = [Path(config["PATHS"]["wide_csv"][g][v]) for g in period.groups for v in config["PATHS"]["wide_csv"][g]]
     inputs += marcap_files + sorted(d / p.name for d in (LISTING_DIR, DELISTING_DIR) for p in (root / d).glob("*.csv"))
     code = [Path("src/pipeline.py"), Path("src/preprocessing/listing.py"), Path("src/data_io.py"), Path("src/contracts.py")]
     run = {**result, "started": started.isoformat(timespec="seconds"), "command": " ".join(sys.argv),
@@ -135,14 +150,16 @@ def plan_ingest(config: Config, *, root: Path = Path("."), execute: bool = False
     return result
 
 
-def check_ingest_current(config: Config, *, root: Path = Path(".")) -> dict:
-    """현재 공통 입력의 계약을 검사한다. 과거 실행 기록은 읽지 않는다."""
+def check_ingest_current(config: Config, *, root: Path = Path("."), final: bool = False) -> dict:
+    """현재 공통 입력의 계약을 검사한다. 과거 실행 기록은 읽지 않는다. final=True면 최종 표(DATA_PERIOD.final_dir)."""
+    from src import periods as period_rules
+    period = period_rules.resolve(config, root, final=final)
     import pandas as pd
     from src.contracts import WIDE_PANEL_COLUMNS, ELIGIBILITY_COLUMNS, EQUITY_ASOF_COLUMNS
     from src.preprocessing.panel import enforce_unique_stock_month, normalize_month, normalize_stock_id
     tables={}
     for name,columns in (("panel",WIDE_PANEL_COLUMNS),("eligibility",ELIGIBILITY_COLUMNS),("asof",EQUITY_ASOF_COLUMNS)):
-        path=root/config['PATHS'][name]
+        path=root/period_rules.table_path(config,name,final=final)
         if not path.is_file():raise FileNotFoundError('required_data_missing:'+str(path))
         tables[name]=pd.read_parquet(path)
         if not set(columns).issubset(tables[name]):raise ValueError('input_columns:'+name)
@@ -152,11 +169,13 @@ def check_ingest_current(config: Config, *, root: Path = Path(".")) -> dict:
         keyed=f.rename(columns={'stock_code':'stock_id'})
         enforce_unique_stock_month(keyed,month_column=month)
         normalize_stock_id(keyed.stock_id.tolist());normalize_month(keyed[month].tolist())
-        last='2021-12' if name!='asof' else '2021-11'
+        last=period.end if name!='asof' else period.last_base_month
         if not keyed[month].between('2000-01',last).all():raise PermissionError('development_input_only:'+name)
+        if final and keyed[month].max()!=last:raise ValueError('final_table_not_through_data_end:'+name)
     pd.testing.assert_frame_equal(panel[['stock_id','month','eligible']].sort_values(['stock_id','month']).reset_index(drop=True),
         elig[['stock_id','month','eligible']].sort_values(['stock_id','month']).reset_index(drop=True),check_dtype=False)
-    return {'data_inputs_checked':True,'input_sha256':{config['PATHS'][n]:_sha256(root/config['PATHS'][n]) for n in tables}}
+    return {'data_inputs_checked':True,'period_end':period.end,
+            'input_sha256':{period_rules.table_path(config,n,final=final).as_posix():_sha256(root/period_rules.table_path(config,n,final=final)) for n in tables}}
 
 
 def plan_observe(config: Config, *, root: Path = Path("."), execute: bool = False) -> dict:
@@ -198,11 +217,17 @@ def check_observe_current(config: Config, *, root: Path = Path(".")) -> dict:
     return check_ingest_current(config,root=root)
 
 
-def plan_features(config: Config, *, root: Path = Path("."), execute: bool = False, verify_existing: bool = False) -> dict:
+def plan_features(config: Config, *, root: Path = Path("."), execute: bool = False, verify_existing: bool = False,
+                  final: bool = False) -> dict:
     """H1 표 3개와 H3 표(data/processed/h3.parquet)를 계산·검사·저장. samples·목표 결합은 TODO.
 
     H3 계약 검산(validate_h3_contract)을 전체 자료에 돌려 약 6~7분 걸린다. 실행 기록 폴더 이름(FEATURES_H1)은 유지한다.
+    final=True: 최종 표(data/final의 panel·eligibility·asof, 기준월 끝 = 자료 끝의 전달)로 같은 계산·검사를 하고
+    결과를 DATA_PERIOD.final_dir에 바로 쓴다(실행 기록 폴더 없음).
     """
+    from src import periods as period_rules
+    period = period_rules.resolve(config, root, final=final)
+    last_base, last_month = period.last_base_month, period.end
     import json
     import shutil
     import sys
@@ -215,7 +240,7 @@ def plan_features(config: Config, *, root: Path = Path("."), execute: bool = Fal
     if execute and verify_existing:
         raise ValueError("verification_must_not_overwrite_existing_tables")
     started = datetime.now()
-    pre = check_observe_current(config, root=root)
+    pre = check_ingest_current(config, root=root, final=final)
     expected = {"momentum_months": 11, "momentum_start_offset": -11, "momentum_end_offset": -1,
                 "size_transform": "natural_log", "ddof": 1, "min_stocks": 2,
                 "coefficients": {"size": -1, "bm": 1, "mom": 1}, "divisor": 3}
@@ -223,20 +248,21 @@ def plan_features(config: Config, *, root: Path = Path("."), execute: bool = Fal
         raise ValueError("unapproved_H1_config")
     if any(config["UNITS"].get(k) != v for k, v in {"return": "decimal", "market_cap": "KRW", "equity": "KRW"}.items()):
         raise ValueError("H1_units_mismatch")
-    panel = pd.read_parquet(root / config["PATHS"]["panel"])
-    asof = pd.read_parquet(root / config["PATHS"]["asof"])
+    panel = pd.read_parquet(root / period_rules.table_path(config, "panel", final=final))
+    asof = pd.read_parquet(root / period_rules.table_path(config, "asof", final=final))
     # parquet에는 단위 attrs가 없어 승인된 설정의 단위 계약을 전달한다.
     panel.attrs["units"] = config["UNITS"]
     asof.attrs["units"] = config["UNITS"]
-    base = panel.loc[panel.month.le("2021-11")].copy()
+    base = panel.loc[panel.month.le(last_base)].copy()
     keys = base[["stock_id", "month"]].rename(columns={"month": "base_month"})
-    components = calculate_size_bm(base, asof).merge(calculate_momentum_11m(panel, keys),
-                      on=["stock_id", "base_month"], how="left", validate="one_to_one")
+    components = calculate_size_bm(base, asof, last_month=last_month).merge(
+        calculate_momentum_11m(panel, keys, last_month=last_month),
+        on=["stock_id", "base_month"], how="left", validate="one_to_one")
     components = components[list(H1_COMPONENT_COLUMNS)].sort_values(["stock_id", "base_month"]).reset_index(drop=True)
-    scores = calculate_h1_score(components)
-    validate_h1_contract(scores, components, asof)
+    scores = calculate_h1_score(components, last_month=last_month)
+    validate_h1_contract(scores, components, asof, last_month=last_month)
     mom = components[list(MOM_COLUMNS)].copy()
-    months = pd.period_range("2000-01", "2021-11", freq="M").astype(str)
+    months = pd.period_range("2000-01", last_base, freq="M").astype(str)
     stocks = sorted(panel.stock_id.unique())
     expected_keys = pd.MultiIndex.from_product([stocks, months], names=["stock_id", "base_month"])
     grid_ok = pd.MultiIndex.from_frame(components[["stock_id", "base_month"]]).equals(expected_keys)
@@ -253,12 +279,12 @@ def plan_features(config: Config, *, root: Path = Path("."), execute: bool = Fal
         ref[valid] = np.prod(1 + raw[valid], axis=1) - 1
         window_ok &= bool(np.allclose(m[month], ref, equal_nan=True, rtol=1e-12, atol=1e-12))
     member = components.eligible.eq(True).fillna(False) & components[["size_available", "bm_available", "mom_available"]].all(axis=1)
-    actual = member.groupby(components.base_month).sum().loc["2000-12":"2021-11"]
+    actual = member.groupby(components.base_month).sum().loc["2000-12":last_base]
     monthly=actual.rename('actual_joint').to_frame()
     monthly['target_month']=(pd.PeriodIndex(monthly.index,freq='M')+1).astype(str)
     monthly['h1_n']=scores.groupby('base_month').h1_available.sum().reindex(monthly.index)
     monthly['actual_h1_month_valid']=monthly.h1_n.ge(2)
-    checks = {"full_grid_1086_x_263": grid_ok and len(stocks) == 1086,
+    checks = {"full_grid_1086_x_263": grid_ok and len(stocks) == 1086 and (final or len(months) == 263),
               "contract_independent_monthly_recalculation": True,
               "momentum_independent_calendar_product": window_ok,
               "first_target_momentum_and_h1_unavailable": bool(components.loc[components.base_month.eq("2000-12"), "mom"].isna().all()
@@ -276,9 +302,10 @@ def plan_features(config: Config, *, root: Path = Path("."), execute: bool = Fal
                    "includes_base_month": True, "reinitialize_every_12_months": False}
     if any(config["H3"].get(k) != v for k, v in expected_h3.items()):
         raise ValueError("unapproved_H3_config")
-    elig_table = pd.read_parquet(root / config["PATHS"]["eligibility"])
-    h3_features, h3_states, h3_history, h3_returns = compute_h3_from_panel(panel, elig_table)
-    validate_h3_contract(h3_features, h3_states, h3_returns, listing_history=h3_history)
+    elig_table = pd.read_parquet(root / period_rules.table_path(config, "eligibility", final=final))
+    h3_features, h3_states, h3_history, h3_returns = compute_h3_from_panel(panel, elig_table, last_base_month=last_base,
+                                                                           last_month=last_month)
+    validate_h3_contract(h3_features, h3_states, h3_returns, listing_history=h3_history, last_month=last_month)
     h3 = h3_output_table(h3_features, h3_states)
     h3_member = h3.eligible.eq(True).fillna(False) & h3_features.sort_values(["stock_id", "base_month"]).vol_available.to_numpy()
     h3_monthly = h3.groupby("base_month").agg(h3_n=("h3_available", "sum"))
@@ -291,7 +318,7 @@ def plan_features(config: Config, *, root: Path = Path("."), execute: bool = Fal
         "h3_first_target_month_available": bool(h3.loc[h3.base_month.eq("2000-12"), "h3_available"].sum() >= 2),
         "h3_eligible_copied": h3.eligible.equals(components.eligible),
         "h3_no_target_columns": "y" not in h3 and "target_month" not in h3})
-    target_months = h3_monthly.loc["2000-12":"2021-11"]
+    target_months = h3_monthly.loc["2000-12":last_base]
     summary.update({"h3_available_cells_2000_12_2021_11": int(target_months.h3_n.sum()),
                     "h3_valid_months": int(target_months.h3_n.ge(2).sum()),
                     "h3_resets": int(h3_states.reset.sum())})
@@ -300,10 +327,18 @@ def plan_features(config: Config, *, root: Path = Path("."), execute: bool = Fal
         raise ValueError("features_checks_failed:" + ",".join(k for k,v in checks.items() if not v))
     if verify_existing:
         for name, table in {"h1_components": components, "mom": mom, "h1": scores, "h3": h3}.items():
-            pd.testing.assert_frame_equal(table, pd.read_parquet(root / config["PATHS"][name]), check_exact=True)
+            pd.testing.assert_frame_equal(table, pd.read_parquet(root / period_rules.table_path(config, name, final=final)),
+                                          check_exact=True)
         result["checks"]["existing_feature_tables_exact_equal"] = True
     if not execute:
         return result
+    if final:
+        tables = {"h1_components": components, "mom": mom, "h1": scores, "h3": h3}
+        for name, table in tables.items():
+            target = root / period_rules.table_path(config, name, final=True)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            table.to_parquet(target, index=False)
+        return {**result, "written": [period_rules.table_path(config, n, final=True).as_posix() for n in tables]}
     stamp = started.strftime("%Y%m%dT%H%M%S%f")
     run_dir = root / FEATURES_H1_RUNS / stamp
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -455,12 +490,20 @@ def plan_h3_overlap(config: Config, *, root: Path = Path("."), execute: bool = F
     return run_overlap(config, root=root, preconditions=pre)
 
 
-def plan_base_features(config: Config, *, root: Path = Path("."), execute: bool = False) -> dict:
+def plan_base_features(config: Config, *, root: Path = Path("."), execute: bool = False, final: bool = False) -> dict:
     """기본 피처 17개 계산 + 검사(가용률·학습 행·단독 Rank IC·상관·배당 방식 재현). src/evaluation/base_analysis.
 
     execute 없으면 입력 파일만 확인한다(피처 계산은 marcap 일별 전체를 읽어 오래 걸림).
     execute면 data/processed/base_features.parquet와 outputs/run_id/BASE_ANALYSIS/<시각>/의 report.md·run.json을 쓴다.
     """
+    if final:   # 최종 표: 피처만 만든다(분석 보고서 없음). data/final의 panel·trading_days·asof를 읽는다
+        from src import periods as period_rules
+        from src.features.base import ensure_base
+        need = [period_rules.table_path(config, k, final=True).as_posix() for k in ("panel", "trading_days", "asof")]
+        missing = [n for n in need if not (root / n).is_file()]
+        if missing:
+            raise FileNotFoundError("required_data_missing:" + ",".join(missing))
+        return ensure_base(root, config, execute=execute, include_test=True)
     from src.evaluation.base_analysis import run
     need = [config["PATHS"][k] for k in ("panel", "trading_days", "h1_components", "h3")]
     missing = [n for n in need if not (root / n).is_file()]
@@ -522,6 +565,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--config", default="config/experiment.yaml")
     parser.add_argument("--stage", required=True, choices=STAGES)
     parser.add_argument("--execute", action="store_true", help="표와 실행 기록을 저장")
+    parser.add_argument("--final", action="store_true",
+                        help="최종 표: 교수님 CSV 전체 기간(테스트·2026 포함)으로 DATA_PERIOD.final_dir에 만든다(ingest·features·base-features)")
     args = parser.parse_args(argv)
     config = load_config(Path(args.config))
     runners = {"ingest": plan_ingest, "observe": plan_observe, "features": plan_features, "h1-test": plan_h1_test,
@@ -531,7 +576,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                "h3-overlap": plan_h3_overlap, "base-features": plan_base_features}
     if args.stage in runners:
         runner = runners[args.stage]
-        result = runner(config, execute=args.execute)
+        if args.final and args.stage not in FINAL_STAGES:
+            raise PermissionError(f"final_not_supported_for:{args.stage}")
+        result = runner(config, execute=args.execute, **({"final": True} if args.final else {}))
         print(json.dumps(result, ensure_ascii=False, indent=1, default=str))
         return
     run_stage(args.stage, config=config)

@@ -60,6 +60,14 @@ class ClassifyTests(unittest.TestCase):
     def test_unknown_codes(self):
         self.assertEqual(dg.classify({"9999999999"}, TABLE), (None, []))
 
+    def test_one_file_with_balance_sheet_and_flows_serves_both(self):
+        # 테스트 기간 연결 파일: 재무상태표 6개 + 손익·현금흐름 5개 항목이 한 파일에(2026-11-27)
+        codes = set(TABLE["kifrs_consolidated"]) | set(TABLE["flows_KIFRS_cons"])
+        self.assertEqual(sorted(dg.complete_roles(codes, TABLE)), ["flows_KIFRS_cons", "kifrs_consolidated"])
+
+    def test_fiscal_month_not_attached_to_kifrs_file(self):
+        self.assertEqual(dg.complete_roles(set(TABLE["kifrs_consolidated"]), TABLE), ["kifrs_consolidated"])
+
 
 class ScanTests(unittest.TestCase):
     def setUp(self):

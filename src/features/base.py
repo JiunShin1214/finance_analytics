@@ -3,18 +3,21 @@
 정의·근거·결정은 config BASE_FEATURES(2026-11-19~21 사용자 결정, 노션 「12주차 실행」 2-2)를 따른다.
 중간 집계(marcap 월 집계, 시장 일수익률, 연간 재무)는 파일로 남기지 않고 메모리에서 계산한다.
 입력은 data/ 파일과 config뿐이며 이전 실행 기록을 읽지 않는다. 테스트 기간(2022~) 파일은 열지 않는다.
+예외: --final(최종 표, src.periods)은 교수님 CSV 마지막 달까지 모든 자료(테스트 봉인 폴더 포함)를 읽고 DATA_PERIOD.final_dir에 쓴다.
 
 열: stock_id, base_month, eligible, financial(금융업 판정), 피처 24개(종목 20 + 시장 공통 4), 피처별 <이름>_reason(값이 없을 때 이유).
 시장 공통 4개(mkt_ret, mkt_ret3, mkt_vol12, breadth)는 같은 달 모든 종목이 같은 값이다.
 
 실행: python -m src.features.base             (계산·검사만, 쓰지 않음)
       python -m src.features.base --execute   (base_features.parquet 쓰기)
+      python -m src.features.base --final --execute   (전체 기간 → data/final/base_features.parquet)
 """
 from __future__ import annotations
 
 import argparse
 import glob
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -61,13 +64,15 @@ def _long(w: pd.DataFrame, name: str) -> pd.Series:
 
 # ---------------------------------------------------------------- 일별 시장 자료(marcap)
 
-def load_marcap(root: Path, cfg: dict, stock_ids: set[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """marcap 2000~2021. (패널 종목의 일별 행, 시장수익률용 KOSPI 전 종목 행). 종목코드 6자리, 일수익률은 소수."""
+def load_marcap(root: Path, cfg: dict, stock_ids: set[str], last_year: int = 2021) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """marcap 2000~last_year(개발 2021, 최종은 자료 끝 연도). (패널 종목의 일별 행, 시장수익률용 KOSPI 전 종목 행).
+    종목코드 6자리, 일수익률은 소수."""
     keep, kospi = [], []
     for f in sorted(glob.glob(str(root / cfg['inputs']['marcap_dir'] / 'marcap-*.parquet'))):
-        if int(Path(f).stem.split('-')[1]) > 2021:
+        if int(Path(f).stem.split('-')[1]) > last_year:
             continue
-        guard_development(f)
+        if last_year <= 2021:
+            guard_development(f)
         m = pd.read_parquet(f, columns=MARCAP_COLUMNS)
         m['stock_id'] = m.Code.astype(str).str.strip().str.zfill(6)   # 2000-01~05 파일은 앞 0이 빠져 있음
         m['date'] = pd.to_datetime(m.Date)
@@ -157,13 +162,28 @@ def weekly_beta(daily: pd.DataFrame, mkt: pd.Series, months: list[str], window: 
 
 # ---------------------------------------------------------------- 월 자료(KOSPI 지수, 배당 포함 수익률)
 
+def kospi_index_file(root: Path, cfg: dict) -> Path:
+    """KOSIS 코스피 지수 CSV. config 값은 파일 이름 규칙(예: 코스피_지수_*.csv)이고, 여럿이면 이름(받은 시각)이 가장 늦은 것."""
+    files = sorted((root / cfg['inputs']['kospi_index_csv']).parent.glob(Path(cfg['inputs']['kospi_index_csv']).name))
+    if not files:
+        raise FileNotFoundError('kospi_index_csv_missing:' + cfg['inputs']['kospi_index_csv'])
+    return files[-1]
+
+
 def kospi_monthly(root: Path, cfg: dict) -> pd.Series:
-    path = root / cfg['inputs']['kospi_index_csv']
-    guard_development(path)
-    k = pd.read_csv(path, encoding='utf-8-sig')
+    """월말 지수(연월말 행). KOSIS 받는 방식에 따라 인코딩(UTF-8/cp949)과 구분 열 수(2~3개)가 달라서
+    'YYYY.MM' 모양인 열만 월로 읽는다(2026-11-26)."""
+    path = kospi_index_file(root, cfg)
+    for enc in ('utf-8-sig', 'cp949'):
+        try:
+            k = pd.read_csv(path, encoding=enc)
+            break
+        except UnicodeDecodeError:
+            continue
     row = k[k.iloc[:, 0].astype(str).str.contains('연월말')].iloc[0]
-    level = pd.to_numeric(row.iloc[2:], errors='coerce').astype(float)
-    level.index = [c.replace('.', '-') for c in level.index]
+    months = [c for c in k.columns if re.fullmatch(r'\d{4}\.\d{2}', str(c))]
+    level = pd.to_numeric(row[months], errors='coerce').astype(float)
+    level.index = [c.replace('.', '-') for c in months]
     return level
 
 
@@ -331,10 +351,12 @@ def industry_features(acc: pd.DataFrame, cap: pd.Series) -> dict:
     return {k: v.where(nonfin) for k, v in f.items()}
 
 
-def equity_asof(root: Path, config: dict) -> pd.Series:
+def equity_asof(root: Path, config: dict, *, final: bool = False) -> pd.Series:
     """B/M과 같은 자기자본(H1 as-of의 usable 값), (stock_id, base_month) 색인.
     as-of는 0 이하(자본잠식)를 usable=False, reason=nonpositive_equity로 두므로 그 값은 남겨 이유 표시에 쓰고, RMW에서는 결측."""
-    a = pd.read_parquet(root / config['PATHS']['asof'], columns=['stock_code', 'base_month', 'equity', 'usable', 'reason'])
+    from src import periods
+    a = pd.read_parquet(root / periods.table_path(config, 'asof', final=final),
+                        columns=['stock_code', 'base_month', 'equity', 'usable', 'reason'])
     a = a[a.usable.eq(True) | a.reason.eq('nonpositive_equity')]
     return a.set_index(['stock_code', 'base_month']).equity.rename_axis(['stock_id', 'base_month']).astype(float)
 
@@ -343,16 +365,23 @@ def equity_asof(root: Path, config: dict) -> pd.Series:
 
 def build_base(root: Path, config: dict, *, statements: pd.DataFrame | None = None,
                include_test: bool = False) -> tuple[pd.DataFrame, dict]:
+    """include_test=True: 최종 표(src.periods final). 기준월 끝 = 자료 끝의 전달, 입력은 data/final 표."""
+    from src import periods
     cfg = config['BASE_FEATURES']
     root = Path(root)
+    period = periods.resolve(config, root, final=include_test)
     first, last = cfg['base_months']
+    if include_test:
+        last = period.last_base_month
+    elif last != period.last_base_month:
+        raise ValueError('base_months_end_must_match_DATA_PERIOD')
     months = pd.period_range(first, last, freq='M').astype(str).tolist()
-    panel = pd.read_parquet(root / config['PATHS']['panel'],
+    panel = pd.read_parquet(root / periods.table_path(config, 'panel', final=include_test),
                             columns=['stock_id', 'month', 'return', 'market_cap', 'price', 'shares_outstanding', 'eligible'])
-    if panel.month.max() > '2021-12':
+    if panel.month.max() > period.end:
         raise PermissionError('development_months_only')
     all_months = sorted(panel.month.unique())
-    td = pd.read_parquet(root / config['PATHS']['trading_days'])
+    td = pd.read_parquet(root / periods.table_path(config, 'trading_days', final=include_test))
     last_days = pd.to_datetime(td.set_index('month').last_trading_day)
     p = panel.set_index(['stock_id', 'month']).sort_index()
     feats = {}
@@ -364,7 +393,7 @@ def build_base(root: Path, config: dict, *, statements: pd.DataFrame | None = No
     feats['ln_price'] = np.log(p.price.where(p.price.gt(0)))
 
     # marcap 일별
-    daily, kospi = load_marcap(root, cfg, set(panel.stock_id))
+    daily, kospi = load_marcap(root, cfg, set(panel.stock_id), last_year=period.end_year)
     mkt = market_daily_return(kospi)
     del kospi
     dm = daily_monthly(daily, mkt, int(cfg['daily_rules']['ivol_min_days']))
@@ -396,7 +425,7 @@ def build_base(root: Path, config: dict, *, statements: pd.DataFrame | None = No
     cap_at = p.market_cap.where(p.market_cap.gt(0)).reindex(pd.MultiIndex.from_tuples(acc.index, names=['stock_id', 'month']))
     feats['ep'] = pd.Series(acc.ni_owner.to_numpy() / cap_at.to_numpy(), index=acc.index)
     # RMW: 영업이익 / B/M과 같은 자기자본(t월 as-of). 자본 0 이하(자본잠식)는 결측(팀원 결정, Ken French OP 포함 조건)
-    equity = equity_asof(root, config)
+    equity = equity_asof(root, config, final=include_test)
     eq = equity.reindex(acc.index)
     feats['rmw'] = acc.op_income / eq.where(eq.gt(0))
     feats.update(industry_features(acc, cap_at))
@@ -483,7 +512,9 @@ def checks(out, dm, mkt, lvl, ret, acc, stmts) -> dict:
 
 def input_hashes(root: Path, config: dict, *, include_test: bool = False) -> dict:
     cfg = config['BASE_FEATURES']['inputs']
-    files = [config['PATHS']['panel'], config['PATHS']['trading_days'], config['PATHS']['asof'], cfg['kospi_index_csv']]
+    from src import periods
+    files = [periods.table_path(config, k, final=include_test).as_posix() for k in ('panel', 'trading_days', 'asof')]
+    files += [kospi_index_file(root, config["BASE_FEATURES"]).relative_to(root).as_posix()]
     roles = ['total_return', 'industry_static', 'industry_hist', *[f'flows_{k}' for k in cfg['flows_xlsx']]]
     files += [p.relative_to(root).as_posix() for r in roles for p in dataguide_files.paths(root, r, include_test=include_test)]
     return {f: sha256(root / f) for f in files}
@@ -492,8 +523,10 @@ def input_hashes(root: Path, config: dict, *, include_test: bool = False) -> dic
 def ensure_base(root: Path, config: dict, *, execute: bool = False, statements: pd.DataFrame | None = None, log=print,
                 include_test: bool = False) -> dict:
     root = Path(root)
+    from src import periods
     out, record = build_base(root, config, statements=statements, include_test=include_test)
-    target = root / config['PATHS']['base_features']
+    output = periods.table_path(config, 'base_features', final=include_test)
+    target = root / output
     if execute:
         target.parent.mkdir(parents=True, exist_ok=True)
         out.to_parquet(target, index=False)
@@ -501,7 +534,7 @@ def ensure_base(root: Path, config: dict, *, execute: bool = False, statements: 
         record['output_sha256'] = sha256(target)
     else:
         record['status'] = 'DRY_RUN_NOT_WRITTEN'
-    record['output'] = config['PATHS']['base_features']
+    record['output'] = output.as_posix()
     log(f"base features {record['status']}: {record['rows']:,}행, 종목 {record['stocks']:,}")
     return record
 
@@ -510,10 +543,11 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description='기본 피처(data/processed/base_features.parquet)')
     ap.add_argument('--config', default='config/experiment.yaml')
     ap.add_argument('--execute', action='store_true')
+    ap.add_argument('--final', action='store_true', help='전체 기간(src.periods) → DATA_PERIOD.final_dir/base_features.parquet')
     a = ap.parse_args(argv)
     root = Path.cwd()
     config = yaml.safe_load((root / a.config).read_text(encoding='utf-8'))
-    print(json.dumps(ensure_base(root, config, execute=a.execute), ensure_ascii=False, indent=2, default=str))
+    print(json.dumps(ensure_base(root, config, execute=a.execute, include_test=a.final), ensure_ascii=False, indent=2, default=str))
 
 
 if __name__ == '__main__':

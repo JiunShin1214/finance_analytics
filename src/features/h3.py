@@ -125,19 +125,22 @@ def update_ewma_state(previous_variance: float, current_return: float | None, *,
     return float(result)
 
 
-def _keys(table, month, required):
+DEV_LAST_MONTH = '2021-12'   # 개발 자료 끝. 최종 표(src.periods final)는 last_month로 자료 끝을 넘긴다
+
+
+def _keys(table, month, required, last_month=DEV_LAST_MONTH):
     if not isinstance(table, DataFrame) or not required.issubset(table.columns):
         raise ValueError(f'missing columns: {sorted(required)}')
     enforce_unique_stock_month(table, month_column=month)
     normalize_stock_id(table['stock_id'].tolist())
     normalize_month(table[month].tolist())
-    if any(not '2000-01' <= m <= '2021-12' for m in table[month]):
+    if any(not '2000-01' <= m <= last_month for m in table[month]):
         raise PermissionError('H3 currently accepts development months 2000-2021 only')
 
 
-def _inputs(returns, base_keys, listing_history):
-    _keys(returns, 'month', {'stock_id', 'month', 'return'})
-    _keys(base_keys, 'base_month', {'stock_id', 'base_month'})
+def _inputs(returns, base_keys, listing_history, last_month=DEV_LAST_MONTH):
+    _keys(returns, 'month', {'stock_id', 'month', 'return'}, last_month)
+    _keys(base_keys, 'base_month', {'stock_id', 'base_month'}, last_month)
     units = returns.attrs.get('units', {})
     if not isinstance(units, dict) or units.get('return') != 'decimal':
         raise ValueError("attrs['units']['return']='decimal' required")
@@ -150,7 +153,7 @@ def _inputs(returns, base_keys, listing_history):
     b['eligible'] = pd.array(eligible, dtype='boolean')
     history = None
     if listing_history is not None:
-        _keys(listing_history, 'month', {'stock_id', 'month', 'is_listed', 'basis'})
+        _keys(listing_history, 'month', {'stock_id', 'month', 'is_listed', 'basis'}, last_month)
         if any(not isinstance(x, (bool, np.bool_)) for x in listing_history['is_listed']):
             raise ValueError('listing history requires explicit non-null booleans')
         if any(not isinstance(x, str) or not x.strip() for x in listing_history['basis']):
@@ -299,7 +302,7 @@ def _score(features):
     return result
 
 
-def calculate_h3_ewma_feature(returns: DataFrame, base_keys: DataFrame, *, decay: float = 0.97, recent_window: int = 12, recent_min_valid: int = 10, listing_history: DataFrame | None = None) -> DataFrame:
+def calculate_h3_ewma_feature(returns: DataFrame, base_keys: DataFrame, *, decay: float = 0.97, recent_window: int = 12, recent_min_valid: int = 10, listing_history: DataFrame | None = None, last_month: str = DEV_LAST_MONTH) -> DataFrame:
     """Same-pass calendar states in attrs['state_history']; optional history keyword.
 
     See module contract for column schemas, identity, whole-month listing semantics
@@ -309,7 +312,7 @@ def calculate_h3_ewma_feature(returns: DataFrame, base_keys: DataFrame, *, decay
     if recent_window != 12 or recent_min_valid != 10:
         raise ValueError('H3 window parameters are fixed at 12, 10')
     _decay_weight(decay)
-    r, b, history = _inputs(returns, base_keys, listing_history)
+    r, b, history = _inputs(returns, base_keys, listing_history, last_month)
     states, _ = _state_history(r, b, history, decays=(decay,))
     features = b.merge(states.loc[:, ['stock_id', 'base_month', 'v', 'initialized',
                                      'recent_valid_count']],
@@ -328,7 +331,8 @@ def calculate_h3_ewma_feature(returns: DataFrame, base_keys: DataFrame, *, decay
     return features
 
 
-def compute_h3_from_panel(panel: DataFrame, eligibility: DataFrame, *, last_base_month: str = '2021-11'):
+def compute_h3_from_panel(panel: DataFrame, eligibility: DataFrame, *, last_base_month: str = '2021-11',
+                          last_month: str = DEV_LAST_MONTH):
     """panel(stock_id, month, return, eligible)·eligibility -> (특징표, 상태 이력, 상장 이력, 수익률 입력).
 
     기준월 2000-01~last_base_month 전 행. 수익률은 제공 원값만, 4개월 공백 초기화의 상장 여부는 KOSPI만 본다
@@ -341,7 +345,7 @@ def compute_h3_from_panel(panel: DataFrame, eligibility: DataFrame, *, last_base
     returns.attrs['units'] = {'return': 'decimal'}
     keys = panel.loc[panel.month.le(last_base_month), ['stock_id', 'month', 'eligible']].rename(columns={'month': 'base_month'})
     history = kospi_listing_history(eligibility, panel)
-    features = calculate_h3_ewma_feature(returns, keys, listing_history=history)
+    features = calculate_h3_ewma_feature(returns, keys, listing_history=history, last_month=last_month)
     states = features.attrs['state_history']
     features = features.copy()
     features.attrs = {}
@@ -349,7 +353,7 @@ def compute_h3_from_panel(panel: DataFrame, eligibility: DataFrame, *, last_base
 
 
 def compute_h3_sigma_grid(panel: DataFrame, eligibility: DataFrame, *, last_base_month: str = '2021-11',
-                          candidates: DataFrame | None = None) -> DataFrame:
+                          candidates: DataFrame | None = None, last_month: str = DEV_LAST_MONTH) -> DataFrame:
     """λ 후보 10개의 σ를 한 번의 상태 계산으로 만든다(model_test 입력).
 
     입력·달력·초기화·공백 초기화는 compute_h3_from_panel과 같다. 반환 열: stock_id, base_month, eligible,
@@ -367,7 +371,7 @@ def compute_h3_sigma_grid(panel: DataFrame, eligibility: DataFrame, *, last_base
     returns.attrs['units'] = {'return': 'decimal'}
     keys = panel.loc[panel.month.le(last_base_month), ['stock_id', 'month', 'eligible']].rename(columns={'month': 'base_month'})
     history = kospi_listing_history(eligibility, panel)
-    r, b, history = _inputs(returns, keys, history)
+    r, b, history = _inputs(returns, keys, history, last_month)
     states, grid = _state_history(r, b, history, decays=tuple(candidates['decay']))
     labels = [f'sigma_{x}' for x in candidates['label']]
     states = pd.concat([states[['stock_id', 'base_month', 'initialized', 'recent_valid_count']],
@@ -399,14 +403,15 @@ def _close(actual, expected, name):
         raise ValueError(f'{name}: contract mismatch')
 
 
-def validate_h3_contract(features: DataFrame, state_history: DataFrame, returns: DataFrame, *, listing_history: DataFrame | None = None) -> None:
+def validate_h3_contract(features: DataFrame, state_history: DataFrame, returns: DataFrame, *, listing_history: DataFrame | None = None,
+                         last_month: str = DEV_LAST_MONTH) -> None:
     """Audit source alignment, state equations, events and sample Z independently.
 
     Does not call the calculation/initialize/update/score producers. Pass the same
     optional listing_history. Full state coverage includes non-requested months.
     """
-    r, b, history = _inputs(returns, features, listing_history)
-    _keys(state_history, 'base_month', set(STATE_COLUMNS))
+    r, b, history = _inputs(returns, features, listing_history, last_month)
+    _keys(state_history, 'base_month', set(STATE_COLUMNS), last_month)
     if not set(VALUE_COLUMNS).issubset(features.columns):
         raise ValueError('incomplete H3 feature schema')
     if set(state_history['stock_id']) != set(b['stock_id']):

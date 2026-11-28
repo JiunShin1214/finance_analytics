@@ -29,5 +29,8 @@ pyarrow==26.0.0
 # YAML 실험 설정
 PyYAML==6.0.3
 
+# 엑셀 읽기(H4 EPU·H2 부채비율, 2026-11-26 추가)
+openpyxl==3.1.5
+
 # 관측·분석 그림
 matplotlib==3.11.2
